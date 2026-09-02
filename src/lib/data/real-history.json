@@ -1,0 +1,2699 @@
+{
+  "seasons": [
+    {
+      "id": "season-1",
+      "seasonNumber": 1,
+      "startDate": "2024-01-01T00:00:00.000Z",
+      "completionDate": "2026-03-20T00:00:00.000Z",
+      "isComplete": true,
+      "winnerId": null,
+      "adiFinalPoints": null,
+      "renFinalPoints": null,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-2",
+      "seasonNumber": 2,
+      "startDate": "2024-01-22T00:00:00.000Z",
+      "completionDate": "2026-05-09T00:00:00.000Z",
+      "isComplete": true,
+      "winnerId": null,
+      "adiFinalPoints": null,
+      "renFinalPoints": null,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-3",
+      "seasonNumber": 3,
+      "startDate": "2024-02-12T00:00:00.000Z",
+      "completionDate": "2026-05-30T00:00:00.000Z",
+      "isComplete": true,
+      "winnerId": null,
+      "adiFinalPoints": null,
+      "renFinalPoints": null,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-4",
+      "seasonNumber": 4,
+      "startDate": "2024-03-04T00:00:00.000Z",
+      "completionDate": "2026-06-04T00:00:00.000Z",
+      "isComplete": true,
+      "winnerId": null,
+      "adiFinalPoints": null,
+      "renFinalPoints": null,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-5",
+      "seasonNumber": 5,
+      "startDate": "2024-03-25T00:00:00.000Z",
+      "completionDate": "2026-06-04T00:00:00.000Z",
+      "isComplete": true,
+      "winnerId": null,
+      "adiFinalPoints": null,
+      "renFinalPoints": null,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-6",
+      "seasonNumber": 6,
+      "startDate": "2024-04-15T00:00:00.000Z",
+      "completionDate": "2026-07-11T00:00:00.000Z",
+      "isComplete": true,
+      "winnerId": null,
+      "adiFinalPoints": null,
+      "renFinalPoints": null,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-7",
+      "seasonNumber": 7,
+      "startDate": "2024-05-06T00:00:00.000Z",
+      "completionDate": "2026-07-11T00:00:00.000Z",
+      "isComplete": true,
+      "winnerId": null,
+      "adiFinalPoints": null,
+      "renFinalPoints": null,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-8",
+      "seasonNumber": 8,
+      "startDate": "2024-05-27T00:00:00.000Z",
+      "completionDate": "2026-08-26T00:00:00.000Z",
+      "isComplete": true,
+      "winnerId": null,
+      "adiFinalPoints": null,
+      "renFinalPoints": null,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-9",
+      "seasonNumber": 9,
+      "startDate": "2024-06-17T00:00:00.000Z",
+      "completionDate": "2026-08-26T00:00:00.000Z",
+      "isComplete": true,
+      "winnerId": null,
+      "adiFinalPoints": null,
+      "renFinalPoints": null,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    }
+  ],
+  "races": [
+    {
+      "id": "season-1-race-1",
+      "seasonId": "season-1",
+      "raceNumber": 1,
+      "circuitId": "gcn-waluigi-stadium",
+      "adiFinishingPosition": 11,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-2",
+      "seasonId": "season-1",
+      "raceNumber": 2,
+      "circuitId": "gcn-peach-beach",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 9,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-3",
+      "seasonId": "season-1",
+      "raceNumber": 3,
+      "circuitId": "toads-factory",
+      "adiFinishingPosition": 12,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-4",
+      "seasonId": "season-1",
+      "raceNumber": 4,
+      "circuitId": "grumble-volcano",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-5",
+      "seasonId": "season-1",
+      "raceNumber": 5,
+      "circuitId": "koopa-cape",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-6",
+      "seasonId": "season-1",
+      "raceNumber": 6,
+      "circuitId": "n64-sherbet-land",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-7",
+      "seasonId": "season-1",
+      "raceNumber": 7,
+      "circuitId": "gba-shy-guy-beach",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-8",
+      "seasonId": "season-1",
+      "raceNumber": 8,
+      "circuitId": "dry-dry-ruins",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-9",
+      "seasonId": "season-1",
+      "raceNumber": 9,
+      "circuitId": "ds-delfino-square",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-10",
+      "seasonId": "season-1",
+      "raceNumber": 10,
+      "circuitId": "warios-gold-mine",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-11",
+      "seasonId": "season-1",
+      "raceNumber": 11,
+      "circuitId": "rainbow-road",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-12",
+      "seasonId": "season-1",
+      "raceNumber": 12,
+      "circuitId": "bowsers-castle",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-13",
+      "seasonId": "season-1",
+      "raceNumber": 13,
+      "circuitId": "gba-bowser-castle-3",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-14",
+      "seasonId": "season-1",
+      "raceNumber": 14,
+      "circuitId": "maple-treeway",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-15",
+      "seasonId": "season-1",
+      "raceNumber": 15,
+      "circuitId": "n64-bowsers-castle",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-16",
+      "seasonId": "season-1",
+      "raceNumber": 16,
+      "circuitId": "moo-moo-meadows",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-17",
+      "seasonId": "season-1",
+      "raceNumber": 17,
+      "circuitId": "gcn-mario-circuit",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-18",
+      "seasonId": "season-1",
+      "raceNumber": 18,
+      "circuitId": "coconut-mall",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-19",
+      "seasonId": "season-1",
+      "raceNumber": 19,
+      "circuitId": "mario-circuit",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 11,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-20",
+      "seasonId": "season-1",
+      "raceNumber": 20,
+      "circuitId": "snes-mario-circuit-3",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 11,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-21",
+      "seasonId": "season-1",
+      "raceNumber": 21,
+      "circuitId": "moonview-highway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-22",
+      "seasonId": "season-1",
+      "raceNumber": 22,
+      "circuitId": "luigi-circuit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-23",
+      "seasonId": "season-1",
+      "raceNumber": 23,
+      "circuitId": "ds-peach-gardens",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-24",
+      "seasonId": "season-1",
+      "raceNumber": 24,
+      "circuitId": "snes-ghost-valley-2",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-25",
+      "seasonId": "season-1",
+      "raceNumber": 25,
+      "circuitId": "mushroom-gorge",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 11,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-26",
+      "seasonId": "season-1",
+      "raceNumber": 26,
+      "circuitId": "ds-yoshi-falls",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-27",
+      "seasonId": "season-1",
+      "raceNumber": 27,
+      "circuitId": "n64-mario-raceway",
+      "adiFinishingPosition": 9,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-28",
+      "seasonId": "season-1",
+      "raceNumber": 28,
+      "circuitId": "n64-dks-jungle-parkway",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-29",
+      "seasonId": "season-1",
+      "raceNumber": 29,
+      "circuitId": "ds-desert-hills",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-30",
+      "seasonId": "season-1",
+      "raceNumber": 30,
+      "circuitId": "gcn-dk-mountain",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-31",
+      "seasonId": "season-1",
+      "raceNumber": 31,
+      "circuitId": "daisy-circuit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-1-race-32",
+      "seasonId": "season-1",
+      "raceNumber": 32,
+      "circuitId": "dk-summit",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-1",
+      "seasonId": "season-2",
+      "raceNumber": 1,
+      "circuitId": "daisy-circuit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-2",
+      "seasonId": "season-2",
+      "raceNumber": 2,
+      "circuitId": "ds-peach-gardens",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-3",
+      "seasonId": "season-2",
+      "raceNumber": 3,
+      "circuitId": "n64-mario-raceway",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-4",
+      "seasonId": "season-2",
+      "raceNumber": 4,
+      "circuitId": "moo-moo-meadows",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-5",
+      "seasonId": "season-2",
+      "raceNumber": 5,
+      "circuitId": "ds-yoshi-falls",
+      "adiFinishingPosition": 9,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-6",
+      "seasonId": "season-2",
+      "raceNumber": 6,
+      "circuitId": "gcn-waluigi-stadium",
+      "adiFinishingPosition": 9,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-7",
+      "seasonId": "season-2",
+      "raceNumber": 7,
+      "circuitId": "n64-dks-jungle-parkway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-8",
+      "seasonId": "season-2",
+      "raceNumber": 8,
+      "circuitId": "ds-desert-hills",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-9",
+      "seasonId": "season-2",
+      "raceNumber": 9,
+      "circuitId": "rainbow-road",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-10",
+      "seasonId": "season-2",
+      "raceNumber": 10,
+      "circuitId": "toads-factory",
+      "adiFinishingPosition": 12,
+      "renFinishingPosition": 9,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-11",
+      "seasonId": "season-2",
+      "raceNumber": 11,
+      "circuitId": "gcn-dk-mountain",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-12",
+      "seasonId": "season-2",
+      "raceNumber": 12,
+      "circuitId": "moonview-highway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-13",
+      "seasonId": "season-2",
+      "raceNumber": 13,
+      "circuitId": "coconut-mall",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-14",
+      "seasonId": "season-2",
+      "raceNumber": 14,
+      "circuitId": "snes-mario-circuit-3",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-15",
+      "seasonId": "season-2",
+      "raceNumber": 15,
+      "circuitId": "luigi-circuit",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-16",
+      "seasonId": "season-2",
+      "raceNumber": 16,
+      "circuitId": "dk-summit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-17",
+      "seasonId": "season-2",
+      "raceNumber": 17,
+      "circuitId": "gba-shy-guy-beach",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-18",
+      "seasonId": "season-2",
+      "raceNumber": 18,
+      "circuitId": "ds-delfino-square",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-19",
+      "seasonId": "season-2",
+      "raceNumber": 19,
+      "circuitId": "mushroom-gorge",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 11,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-20",
+      "seasonId": "season-2",
+      "raceNumber": 20,
+      "circuitId": "koopa-cape",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 11,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-21",
+      "seasonId": "season-2",
+      "raceNumber": 21,
+      "circuitId": "bowsers-castle",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-22",
+      "seasonId": "season-2",
+      "raceNumber": 22,
+      "circuitId": "n64-sherbet-land",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-23",
+      "seasonId": "season-2",
+      "raceNumber": 23,
+      "circuitId": "mario-circuit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-24",
+      "seasonId": "season-2",
+      "raceNumber": 24,
+      "circuitId": "gcn-mario-circuit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-25",
+      "seasonId": "season-2",
+      "raceNumber": 25,
+      "circuitId": "maple-treeway",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-26",
+      "seasonId": "season-2",
+      "raceNumber": 26,
+      "circuitId": "warios-gold-mine",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-27",
+      "seasonId": "season-2",
+      "raceNumber": 27,
+      "circuitId": "grumble-volcano",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 10,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-28",
+      "seasonId": "season-2",
+      "raceNumber": 28,
+      "circuitId": "gba-bowser-castle-3",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-29",
+      "seasonId": "season-2",
+      "raceNumber": 29,
+      "circuitId": "snes-ghost-valley-2",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 10,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-30",
+      "seasonId": "season-2",
+      "raceNumber": 30,
+      "circuitId": "n64-bowsers-castle",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-31",
+      "seasonId": "season-2",
+      "raceNumber": 31,
+      "circuitId": "dry-dry-ruins",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-2-race-32",
+      "seasonId": "season-2",
+      "raceNumber": 32,
+      "circuitId": "gcn-peach-beach",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-01-22T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-1",
+      "seasonId": "season-3",
+      "raceNumber": 1,
+      "circuitId": "ds-peach-gardens",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-2",
+      "seasonId": "season-3",
+      "raceNumber": 2,
+      "circuitId": "snes-ghost-valley-2",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-3",
+      "seasonId": "season-3",
+      "raceNumber": 3,
+      "circuitId": "ds-yoshi-falls",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-4",
+      "seasonId": "season-3",
+      "raceNumber": 4,
+      "circuitId": "gba-bowser-castle-3",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-5",
+      "seasonId": "season-3",
+      "raceNumber": 5,
+      "circuitId": "gcn-waluigi-stadium",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-6",
+      "seasonId": "season-3",
+      "raceNumber": 6,
+      "circuitId": "moo-moo-meadows",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-7",
+      "seasonId": "season-3",
+      "raceNumber": 7,
+      "circuitId": "gcn-peach-beach",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-8",
+      "seasonId": "season-3",
+      "raceNumber": 8,
+      "circuitId": "dk-summit",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-9",
+      "seasonId": "season-3",
+      "raceNumber": 9,
+      "circuitId": "coconut-mall",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-10",
+      "seasonId": "season-3",
+      "raceNumber": 10,
+      "circuitId": "maple-treeway",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-11",
+      "seasonId": "season-3",
+      "raceNumber": 11,
+      "circuitId": "ds-delfino-square",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-12",
+      "seasonId": "season-3",
+      "raceNumber": 12,
+      "circuitId": "koopa-cape",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 7,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-13",
+      "seasonId": "season-3",
+      "raceNumber": 13,
+      "circuitId": "warios-gold-mine",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-14",
+      "seasonId": "season-3",
+      "raceNumber": 14,
+      "circuitId": "snes-mario-circuit-3",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 12,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-15",
+      "seasonId": "season-3",
+      "raceNumber": 15,
+      "circuitId": "rainbow-road",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-16",
+      "seasonId": "season-3",
+      "raceNumber": 16,
+      "circuitId": "grumble-volcano",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 9,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-17",
+      "seasonId": "season-3",
+      "raceNumber": 17,
+      "circuitId": "n64-sherbet-land",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-18",
+      "seasonId": "season-3",
+      "raceNumber": 18,
+      "circuitId": "moonview-highway",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-19",
+      "seasonId": "season-3",
+      "raceNumber": 19,
+      "circuitId": "ds-desert-hills",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-20",
+      "seasonId": "season-3",
+      "raceNumber": 20,
+      "circuitId": "toads-factory",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-21",
+      "seasonId": "season-3",
+      "raceNumber": 21,
+      "circuitId": "luigi-circuit",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-22",
+      "seasonId": "season-3",
+      "raceNumber": 22,
+      "circuitId": "gba-shy-guy-beach",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 7,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-23",
+      "seasonId": "season-3",
+      "raceNumber": 23,
+      "circuitId": "mario-circuit",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-24",
+      "seasonId": "season-3",
+      "raceNumber": 24,
+      "circuitId": "daisy-circuit",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-25",
+      "seasonId": "season-3",
+      "raceNumber": 25,
+      "circuitId": "n64-dks-jungle-parkway",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-26",
+      "seasonId": "season-3",
+      "raceNumber": 26,
+      "circuitId": "gcn-dk-mountain",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-27",
+      "seasonId": "season-3",
+      "raceNumber": 27,
+      "circuitId": "dry-dry-ruins",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 7,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-28",
+      "seasonId": "season-3",
+      "raceNumber": 28,
+      "circuitId": "mushroom-gorge",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-29",
+      "seasonId": "season-3",
+      "raceNumber": 29,
+      "circuitId": "n64-mario-raceway",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-30",
+      "seasonId": "season-3",
+      "raceNumber": 30,
+      "circuitId": "n64-bowsers-castle",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-31",
+      "seasonId": "season-3",
+      "raceNumber": 31,
+      "circuitId": "gcn-mario-circuit",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-3-race-32",
+      "seasonId": "season-3",
+      "raceNumber": 32,
+      "circuitId": "bowsers-castle",
+      "adiFinishingPosition": 9,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-02-12T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-1",
+      "seasonId": "season-4",
+      "raceNumber": 1,
+      "circuitId": "dk-summit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-2",
+      "seasonId": "season-4",
+      "raceNumber": 2,
+      "circuitId": "mario-circuit",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-3",
+      "seasonId": "season-4",
+      "raceNumber": 3,
+      "circuitId": "coconut-mall",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-4",
+      "seasonId": "season-4",
+      "raceNumber": 4,
+      "circuitId": "gba-shy-guy-beach",
+      "adiFinishingPosition": 9,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-5",
+      "seasonId": "season-4",
+      "raceNumber": 5,
+      "circuitId": "n64-bowsers-castle",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-6",
+      "seasonId": "season-4",
+      "raceNumber": 6,
+      "circuitId": "moo-moo-meadows",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-7",
+      "seasonId": "season-4",
+      "raceNumber": 7,
+      "circuitId": "mushroom-gorge",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 10,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-8",
+      "seasonId": "season-4",
+      "raceNumber": 8,
+      "circuitId": "bowsers-castle",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-9",
+      "seasonId": "season-4",
+      "raceNumber": 9,
+      "circuitId": "n64-mario-raceway",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-10",
+      "seasonId": "season-4",
+      "raceNumber": 10,
+      "circuitId": "ds-yoshi-falls",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-11",
+      "seasonId": "season-4",
+      "raceNumber": 11,
+      "circuitId": "gcn-waluigi-stadium",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-12",
+      "seasonId": "season-4",
+      "raceNumber": 12,
+      "circuitId": "ds-desert-hills",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 10,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-13",
+      "seasonId": "season-4",
+      "raceNumber": 13,
+      "circuitId": "koopa-cape",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-14",
+      "seasonId": "season-4",
+      "raceNumber": 14,
+      "circuitId": "snes-ghost-valley-2",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-15",
+      "seasonId": "season-4",
+      "raceNumber": 15,
+      "circuitId": "daisy-circuit",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 10,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-16",
+      "seasonId": "season-4",
+      "raceNumber": 16,
+      "circuitId": "gcn-dk-mountain",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 12,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-17",
+      "seasonId": "season-4",
+      "raceNumber": 17,
+      "circuitId": "gcn-mario-circuit",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-18",
+      "seasonId": "season-4",
+      "raceNumber": 18,
+      "circuitId": "ds-delfino-square",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-19",
+      "seasonId": "season-4",
+      "raceNumber": 19,
+      "circuitId": "gba-bowser-castle-3",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-20",
+      "seasonId": "season-4",
+      "raceNumber": 20,
+      "circuitId": "ds-peach-gardens",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-21",
+      "seasonId": "season-4",
+      "raceNumber": 21,
+      "circuitId": "grumble-volcano",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-22",
+      "seasonId": "season-4",
+      "raceNumber": 22,
+      "circuitId": "toads-factory",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-23",
+      "seasonId": "season-4",
+      "raceNumber": 23,
+      "circuitId": "gcn-peach-beach",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-24",
+      "seasonId": "season-4",
+      "raceNumber": 24,
+      "circuitId": "maple-treeway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-25",
+      "seasonId": "season-4",
+      "raceNumber": 25,
+      "circuitId": "rainbow-road",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-26",
+      "seasonId": "season-4",
+      "raceNumber": 26,
+      "circuitId": "luigi-circuit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 11,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-27",
+      "seasonId": "season-4",
+      "raceNumber": 27,
+      "circuitId": "dry-dry-ruins",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-28",
+      "seasonId": "season-4",
+      "raceNumber": 28,
+      "circuitId": "moonview-highway",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 7,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-29",
+      "seasonId": "season-4",
+      "raceNumber": 29,
+      "circuitId": "n64-sherbet-land",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-30",
+      "seasonId": "season-4",
+      "raceNumber": 30,
+      "circuitId": "warios-gold-mine",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-31",
+      "seasonId": "season-4",
+      "raceNumber": 31,
+      "circuitId": "n64-dks-jungle-parkway",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 9,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-4-race-32",
+      "seasonId": "season-4",
+      "raceNumber": 32,
+      "circuitId": "snes-mario-circuit-3",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-03-04T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-1",
+      "seasonId": "season-5",
+      "raceNumber": 1,
+      "circuitId": "gcn-dk-mountain",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-2",
+      "seasonId": "season-5",
+      "raceNumber": 2,
+      "circuitId": "maple-treeway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-3",
+      "seasonId": "season-5",
+      "raceNumber": 3,
+      "circuitId": "n64-mario-raceway",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-4",
+      "seasonId": "season-5",
+      "raceNumber": 4,
+      "circuitId": "bowsers-castle",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-5",
+      "seasonId": "season-5",
+      "raceNumber": 5,
+      "circuitId": "gcn-peach-beach",
+      "adiFinishingPosition": 12,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-6",
+      "seasonId": "season-5",
+      "raceNumber": 6,
+      "circuitId": "dry-dry-ruins",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-7",
+      "seasonId": "season-5",
+      "raceNumber": 7,
+      "circuitId": "mario-circuit",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-8",
+      "seasonId": "season-5",
+      "raceNumber": 8,
+      "circuitId": "koopa-cape",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-9",
+      "seasonId": "season-5",
+      "raceNumber": 9,
+      "circuitId": "mushroom-gorge",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 9,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-10",
+      "seasonId": "season-5",
+      "raceNumber": 10,
+      "circuitId": "grumble-volcano",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-11",
+      "seasonId": "season-5",
+      "raceNumber": 11,
+      "circuitId": "coconut-mall",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-12",
+      "seasonId": "season-5",
+      "raceNumber": 12,
+      "circuitId": "ds-yoshi-falls",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-13",
+      "seasonId": "season-5",
+      "raceNumber": 13,
+      "circuitId": "moo-moo-meadows",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-14",
+      "seasonId": "season-5",
+      "raceNumber": 14,
+      "circuitId": "luigi-circuit",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-15",
+      "seasonId": "season-5",
+      "raceNumber": 15,
+      "circuitId": "ds-delfino-square",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-16",
+      "seasonId": "season-5",
+      "raceNumber": 16,
+      "circuitId": "n64-bowsers-castle",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-17",
+      "seasonId": "season-5",
+      "raceNumber": 17,
+      "circuitId": "ds-desert-hills",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-18",
+      "seasonId": "season-5",
+      "raceNumber": 18,
+      "circuitId": "snes-mario-circuit-3",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-19",
+      "seasonId": "season-5",
+      "raceNumber": 19,
+      "circuitId": "gba-shy-guy-beach",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-20",
+      "seasonId": "season-5",
+      "raceNumber": 20,
+      "circuitId": "ds-peach-gardens",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-21",
+      "seasonId": "season-5",
+      "raceNumber": 21,
+      "circuitId": "moonview-highway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-22",
+      "seasonId": "season-5",
+      "raceNumber": 22,
+      "circuitId": "toads-factory",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-23",
+      "seasonId": "season-5",
+      "raceNumber": 23,
+      "circuitId": "gcn-waluigi-stadium",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-24",
+      "seasonId": "season-5",
+      "raceNumber": 24,
+      "circuitId": "dk-summit",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-25",
+      "seasonId": "season-5",
+      "raceNumber": 25,
+      "circuitId": "rainbow-road",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-26",
+      "seasonId": "season-5",
+      "raceNumber": 26,
+      "circuitId": "n64-sherbet-land",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 9,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-27",
+      "seasonId": "season-5",
+      "raceNumber": 27,
+      "circuitId": "gcn-mario-circuit",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-28",
+      "seasonId": "season-5",
+      "raceNumber": 28,
+      "circuitId": "gba-bowser-castle-3",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-29",
+      "seasonId": "season-5",
+      "raceNumber": 29,
+      "circuitId": "daisy-circuit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 9,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-30",
+      "seasonId": "season-5",
+      "raceNumber": 30,
+      "circuitId": "n64-dks-jungle-parkway",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 9,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-31",
+      "seasonId": "season-5",
+      "raceNumber": 31,
+      "circuitId": "snes-ghost-valley-2",
+      "adiFinishingPosition": 9,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-5-race-32",
+      "seasonId": "season-5",
+      "raceNumber": 32,
+      "circuitId": "warios-gold-mine",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-03-25T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-1",
+      "seasonId": "season-6",
+      "raceNumber": 1,
+      "circuitId": "n64-mario-raceway",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 11,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-2",
+      "seasonId": "season-6",
+      "raceNumber": 2,
+      "circuitId": "luigi-circuit",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-3",
+      "seasonId": "season-6",
+      "raceNumber": 3,
+      "circuitId": "grumble-volcano",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-4",
+      "seasonId": "season-6",
+      "raceNumber": 4,
+      "circuitId": "dry-dry-ruins",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-5",
+      "seasonId": "season-6",
+      "raceNumber": 5,
+      "circuitId": "rainbow-road",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-6",
+      "seasonId": "season-6",
+      "raceNumber": 6,
+      "circuitId": "mario-circuit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-7",
+      "seasonId": "season-6",
+      "raceNumber": 7,
+      "circuitId": "ds-delfino-square",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-8",
+      "seasonId": "season-6",
+      "raceNumber": 8,
+      "circuitId": "warios-gold-mine",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-9",
+      "seasonId": "season-6",
+      "raceNumber": 9,
+      "circuitId": "snes-ghost-valley-2",
+      "adiFinishingPosition": 12,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-10",
+      "seasonId": "season-6",
+      "raceNumber": 10,
+      "circuitId": "coconut-mall",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-11",
+      "seasonId": "season-6",
+      "raceNumber": 11,
+      "circuitId": "daisy-circuit",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-12",
+      "seasonId": "season-6",
+      "raceNumber": 12,
+      "circuitId": "gba-bowser-castle-3",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-13",
+      "seasonId": "season-6",
+      "raceNumber": 13,
+      "circuitId": "gcn-waluigi-stadium",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-14",
+      "seasonId": "season-6",
+      "raceNumber": 14,
+      "circuitId": "snes-mario-circuit-3",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-15",
+      "seasonId": "season-6",
+      "raceNumber": 15,
+      "circuitId": "gcn-mario-circuit",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-16",
+      "seasonId": "season-6",
+      "raceNumber": 16,
+      "circuitId": "dk-summit",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-17",
+      "seasonId": "season-6",
+      "raceNumber": 17,
+      "circuitId": "mushroom-gorge",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-18",
+      "seasonId": "season-6",
+      "raceNumber": 18,
+      "circuitId": "koopa-cape",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-19",
+      "seasonId": "season-6",
+      "raceNumber": 19,
+      "circuitId": "n64-bowsers-castle",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-20",
+      "seasonId": "season-6",
+      "raceNumber": 20,
+      "circuitId": "n64-dks-jungle-parkway",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-21",
+      "seasonId": "season-6",
+      "raceNumber": 21,
+      "circuitId": "moo-moo-meadows",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-22",
+      "seasonId": "season-6",
+      "raceNumber": 22,
+      "circuitId": "moonview-highway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-23",
+      "seasonId": "season-6",
+      "raceNumber": 23,
+      "circuitId": "toads-factory",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 11,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-24",
+      "seasonId": "season-6",
+      "raceNumber": 24,
+      "circuitId": "ds-yoshi-falls",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 7,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-25",
+      "seasonId": "season-6",
+      "raceNumber": 25,
+      "circuitId": "n64-sherbet-land",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-26",
+      "seasonId": "season-6",
+      "raceNumber": 26,
+      "circuitId": "ds-desert-hills",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-27",
+      "seasonId": "season-6",
+      "raceNumber": 27,
+      "circuitId": "maple-treeway",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-28",
+      "seasonId": "season-6",
+      "raceNumber": 28,
+      "circuitId": "bowsers-castle",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-29",
+      "seasonId": "season-6",
+      "raceNumber": 29,
+      "circuitId": "gcn-peach-beach",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 7,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-30",
+      "seasonId": "season-6",
+      "raceNumber": 30,
+      "circuitId": "ds-peach-gardens",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-31",
+      "seasonId": "season-6",
+      "raceNumber": 31,
+      "circuitId": "gcn-dk-mountain",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-6-race-32",
+      "seasonId": "season-6",
+      "raceNumber": 32,
+      "circuitId": "gba-shy-guy-beach",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 9,
+      "createdAt": "2024-04-15T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-1",
+      "seasonId": "season-7",
+      "raceNumber": 1,
+      "circuitId": "gcn-dk-mountain",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-2",
+      "seasonId": "season-7",
+      "raceNumber": 2,
+      "circuitId": "coconut-mall",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-3",
+      "seasonId": "season-7",
+      "raceNumber": 3,
+      "circuitId": "ds-yoshi-falls",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-4",
+      "seasonId": "season-7",
+      "raceNumber": 4,
+      "circuitId": "ds-delfino-square",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-5",
+      "seasonId": "season-7",
+      "raceNumber": 5,
+      "circuitId": "gcn-mario-circuit",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-6",
+      "seasonId": "season-7",
+      "raceNumber": 6,
+      "circuitId": "dk-summit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-7",
+      "seasonId": "season-7",
+      "raceNumber": 7,
+      "circuitId": "maple-treeway",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-8",
+      "seasonId": "season-7",
+      "raceNumber": 8,
+      "circuitId": "toads-factory",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-9",
+      "seasonId": "season-7",
+      "raceNumber": 9,
+      "circuitId": "gcn-peach-beach",
+      "adiFinishingPosition": 12,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-10",
+      "seasonId": "season-7",
+      "raceNumber": 10,
+      "circuitId": "gcn-waluigi-stadium",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-11",
+      "seasonId": "season-7",
+      "raceNumber": 11,
+      "circuitId": "dry-dry-ruins",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-12",
+      "seasonId": "season-7",
+      "raceNumber": 12,
+      "circuitId": "ds-desert-hills",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-13",
+      "seasonId": "season-7",
+      "raceNumber": 13,
+      "circuitId": "snes-ghost-valley-2",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 10,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-14",
+      "seasonId": "season-7",
+      "raceNumber": 14,
+      "circuitId": "warios-gold-mine",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-15",
+      "seasonId": "season-7",
+      "raceNumber": 15,
+      "circuitId": "bowsers-castle",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-16",
+      "seasonId": "season-7",
+      "raceNumber": 16,
+      "circuitId": "grumble-volcano",
+      "adiFinishingPosition": 12,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-17",
+      "seasonId": "season-7",
+      "raceNumber": 17,
+      "circuitId": "n64-mario-raceway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-18",
+      "seasonId": "season-7",
+      "raceNumber": 18,
+      "circuitId": "ds-peach-gardens",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-19",
+      "seasonId": "season-7",
+      "raceNumber": 19,
+      "circuitId": "mario-circuit",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-20",
+      "seasonId": "season-7",
+      "raceNumber": 20,
+      "circuitId": "luigi-circuit",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-21",
+      "seasonId": "season-7",
+      "raceNumber": 21,
+      "circuitId": "daisy-circuit",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-22",
+      "seasonId": "season-7",
+      "raceNumber": 22,
+      "circuitId": "moo-moo-meadows",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 10,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-23",
+      "seasonId": "season-7",
+      "raceNumber": 23,
+      "circuitId": "gba-bowser-castle-3",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-24",
+      "seasonId": "season-7",
+      "raceNumber": 24,
+      "circuitId": "n64-sherbet-land",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-25",
+      "seasonId": "season-7",
+      "raceNumber": 25,
+      "circuitId": "koopa-cape",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-26",
+      "seasonId": "season-7",
+      "raceNumber": 26,
+      "circuitId": "gba-shy-guy-beach",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-27",
+      "seasonId": "season-7",
+      "raceNumber": 27,
+      "circuitId": "snes-mario-circuit-3",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-28",
+      "seasonId": "season-7",
+      "raceNumber": 28,
+      "circuitId": "rainbow-road",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-29",
+      "seasonId": "season-7",
+      "raceNumber": 29,
+      "circuitId": "moonview-highway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-30",
+      "seasonId": "season-7",
+      "raceNumber": 30,
+      "circuitId": "n64-bowsers-castle",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-31",
+      "seasonId": "season-7",
+      "raceNumber": 31,
+      "circuitId": "mushroom-gorge",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-7-race-32",
+      "seasonId": "season-7",
+      "raceNumber": 32,
+      "circuitId": "n64-dks-jungle-parkway",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-06T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-1",
+      "seasonId": "season-8",
+      "raceNumber": 1,
+      "circuitId": "snes-ghost-valley-2",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 10,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-2",
+      "seasonId": "season-8",
+      "raceNumber": 2,
+      "circuitId": "snes-mario-circuit-3",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-3",
+      "seasonId": "season-8",
+      "raceNumber": 3,
+      "circuitId": "toads-factory",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-4",
+      "seasonId": "season-8",
+      "raceNumber": 4,
+      "circuitId": "moonview-highway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-5",
+      "seasonId": "season-8",
+      "raceNumber": 5,
+      "circuitId": "gcn-dk-mountain",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-6",
+      "seasonId": "season-8",
+      "raceNumber": 6,
+      "circuitId": "rainbow-road",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-7",
+      "seasonId": "season-8",
+      "raceNumber": 7,
+      "circuitId": "grumble-volcano",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 11,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-8",
+      "seasonId": "season-8",
+      "raceNumber": 8,
+      "circuitId": "mario-circuit",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-9",
+      "seasonId": "season-8",
+      "raceNumber": 9,
+      "circuitId": "gcn-waluigi-stadium",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-10",
+      "seasonId": "season-8",
+      "raceNumber": 10,
+      "circuitId": "gcn-mario-circuit",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-11",
+      "seasonId": "season-8",
+      "raceNumber": 11,
+      "circuitId": "mushroom-gorge",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-12",
+      "seasonId": "season-8",
+      "raceNumber": 12,
+      "circuitId": "n64-mario-raceway",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-13",
+      "seasonId": "season-8",
+      "raceNumber": 13,
+      "circuitId": "daisy-circuit",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-14",
+      "seasonId": "season-8",
+      "raceNumber": 14,
+      "circuitId": "n64-bowsers-castle",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-15",
+      "seasonId": "season-8",
+      "raceNumber": 15,
+      "circuitId": "koopa-cape",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-16",
+      "seasonId": "season-8",
+      "raceNumber": 16,
+      "circuitId": "ds-desert-hills",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-17",
+      "seasonId": "season-8",
+      "raceNumber": 17,
+      "circuitId": "dk-summit",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-18",
+      "seasonId": "season-8",
+      "raceNumber": 18,
+      "circuitId": "maple-treeway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-19",
+      "seasonId": "season-8",
+      "raceNumber": 19,
+      "circuitId": "ds-peach-gardens",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-20",
+      "seasonId": "season-8",
+      "raceNumber": 20,
+      "circuitId": "luigi-circuit",
+      "adiFinishingPosition": 12,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-21",
+      "seasonId": "season-8",
+      "raceNumber": 21,
+      "circuitId": "gba-bowser-castle-3",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-22",
+      "seasonId": "season-8",
+      "raceNumber": 22,
+      "circuitId": "coconut-mall",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-23",
+      "seasonId": "season-8",
+      "raceNumber": 23,
+      "circuitId": "dry-dry-ruins",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-24",
+      "seasonId": "season-8",
+      "raceNumber": 24,
+      "circuitId": "gcn-peach-beach",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-25",
+      "seasonId": "season-8",
+      "raceNumber": 25,
+      "circuitId": "moo-moo-meadows",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-26",
+      "seasonId": "season-8",
+      "raceNumber": 26,
+      "circuitId": "ds-yoshi-falls",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-27",
+      "seasonId": "season-8",
+      "raceNumber": 27,
+      "circuitId": "n64-sherbet-land",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-28",
+      "seasonId": "season-8",
+      "raceNumber": 28,
+      "circuitId": "ds-delfino-square",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-29",
+      "seasonId": "season-8",
+      "raceNumber": 29,
+      "circuitId": "bowsers-castle",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-30",
+      "seasonId": "season-8",
+      "raceNumber": 30,
+      "circuitId": "warios-gold-mine",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-31",
+      "seasonId": "season-8",
+      "raceNumber": 31,
+      "circuitId": "gba-shy-guy-beach",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-8-race-32",
+      "seasonId": "season-8",
+      "raceNumber": 32,
+      "circuitId": "n64-dks-jungle-parkway",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-05-27T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-1",
+      "seasonId": "season-9",
+      "raceNumber": 1,
+      "circuitId": "n64-sherbet-land",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 7,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-2",
+      "seasonId": "season-9",
+      "raceNumber": 2,
+      "circuitId": "dry-dry-ruins",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-3",
+      "seasonId": "season-9",
+      "raceNumber": 3,
+      "circuitId": "toads-factory",
+      "adiFinishingPosition": 8,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-4",
+      "seasonId": "season-9",
+      "raceNumber": 4,
+      "circuitId": "rainbow-road",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 6,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-5",
+      "seasonId": "season-9",
+      "raceNumber": 5,
+      "circuitId": "gba-bowser-castle-3",
+      "adiFinishingPosition": 11,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-6",
+      "seasonId": "season-9",
+      "raceNumber": 6,
+      "circuitId": "grumble-volcano",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-7",
+      "seasonId": "season-9",
+      "raceNumber": 7,
+      "circuitId": "n64-mario-raceway",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-8",
+      "seasonId": "season-9",
+      "raceNumber": 8,
+      "circuitId": "warios-gold-mine",
+      "adiFinishingPosition": 11,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-9",
+      "seasonId": "season-9",
+      "raceNumber": 9,
+      "circuitId": "n64-bowsers-castle",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 8,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-10",
+      "seasonId": "season-9",
+      "raceNumber": 10,
+      "circuitId": "mario-circuit",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-11",
+      "seasonId": "season-9",
+      "raceNumber": 11,
+      "circuitId": "bowsers-castle",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-12",
+      "seasonId": "season-9",
+      "raceNumber": 12,
+      "circuitId": "gcn-waluigi-stadium",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-13",
+      "seasonId": "season-9",
+      "raceNumber": 13,
+      "circuitId": "daisy-circuit",
+      "adiFinishingPosition": 5,
+      "renFinishingPosition": 12,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-14",
+      "seasonId": "season-9",
+      "raceNumber": 14,
+      "circuitId": "moo-moo-meadows",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-15",
+      "seasonId": "season-9",
+      "raceNumber": 15,
+      "circuitId": "koopa-cape",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 12,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-16",
+      "seasonId": "season-9",
+      "raceNumber": 16,
+      "circuitId": "snes-mario-circuit-3",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-17",
+      "seasonId": "season-9",
+      "raceNumber": 17,
+      "circuitId": "gba-shy-guy-beach",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-18",
+      "seasonId": "season-9",
+      "raceNumber": 18,
+      "circuitId": "luigi-circuit",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-19",
+      "seasonId": "season-9",
+      "raceNumber": 19,
+      "circuitId": "gcn-peach-beach",
+      "adiFinishingPosition": 4,
+      "renFinishingPosition": 9,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-20",
+      "seasonId": "season-9",
+      "raceNumber": 20,
+      "circuitId": "ds-yoshi-falls",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-21",
+      "seasonId": "season-9",
+      "raceNumber": 21,
+      "circuitId": "coconut-mall",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-22",
+      "seasonId": "season-9",
+      "raceNumber": 22,
+      "circuitId": "dk-summit",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 3,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-23",
+      "seasonId": "season-9",
+      "raceNumber": 23,
+      "circuitId": "snes-ghost-valley-2",
+      "adiFinishingPosition": 12,
+      "renFinishingPosition": 5,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-24",
+      "seasonId": "season-9",
+      "raceNumber": 24,
+      "circuitId": "moonview-highway",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 11,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-25",
+      "seasonId": "season-9",
+      "raceNumber": 25,
+      "circuitId": "maple-treeway",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-26",
+      "seasonId": "season-9",
+      "raceNumber": 26,
+      "circuitId": "ds-peach-gardens",
+      "adiFinishingPosition": 7,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-27",
+      "seasonId": "season-9",
+      "raceNumber": 27,
+      "circuitId": "mushroom-gorge",
+      "adiFinishingPosition": 1,
+      "renFinishingPosition": 2,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-28",
+      "seasonId": "season-9",
+      "raceNumber": 28,
+      "circuitId": "n64-dks-jungle-parkway",
+      "adiFinishingPosition": 10,
+      "renFinishingPosition": 4,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-29",
+      "seasonId": "season-9",
+      "raceNumber": 29,
+      "circuitId": "gcn-mario-circuit",
+      "adiFinishingPosition": 6,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-30",
+      "seasonId": "season-9",
+      "raceNumber": 30,
+      "circuitId": "gcn-dk-mountain",
+      "adiFinishingPosition": 3,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-31",
+      "seasonId": "season-9",
+      "raceNumber": 31,
+      "circuitId": "ds-delfino-square",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    },
+    {
+      "id": "season-9-race-32",
+      "seasonId": "season-9",
+      "raceNumber": 32,
+      "circuitId": "ds-desert-hills",
+      "adiFinishingPosition": 2,
+      "renFinishingPosition": 1,
+      "createdAt": "2024-06-17T00:00:00.000Z"
+    }
+  ],
+  "generatedAt": "2026-08-27T09:20:17.481Z",
+  "sourceFile": "05a33f55-Mariokart_Data.xlsx"
+}

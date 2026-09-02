@@ -1,0 +1,639 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Mayro Kart Retro";
+  src: url("/fonts/mayro-kart-retro.ttf") format("truetype");
+  font-weight: 400 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Mario Kart F2";
+  src: url("/fonts/mario-kart-f2.ttf") format("truetype");
+  font-weight: 400 900;
+  font-display: swap;
+}
+
+:root {
+  /* Surfaces — aged parchment, layered like old scraps of paper */
+  --color-void: #1c130a;
+  --color-bg: #ecdfbd;
+  --color-surface: #e4d3a3;
+  --color-surface-raised: #dbc78e;
+  --color-surface-hover: #d0ba7c;
+  --color-border: #b0925c;
+  --color-border-strong: #856a3c;
+
+  /* Text — iron-gall ink, faded by age */
+  --color-text: #2c1c0f;
+  --color-text-dim: #45331c;
+  --color-text-faint: #6b552f;
+
+  /* Rivalry colors — wax-seal pigments */
+  --color-adi: #8a2f1c;
+  --color-adi-dim: #45170d;
+  --color-adi-glow: #b0512f;
+  --color-ren: #21415f;
+  --color-ren-dim: #10202f;
+  --color-ren-glow: #416f93;
+
+  /* Accent / illuminated gold leaf */
+  --color-gold: #7d5c17;
+  --color-gold-dim: #5a4614;
+  --color-emerald: #43593a;
+  --color-danger: #a8391f;
+
+  /* Stable "on dark" text — deliberately NOT overridden in the dark-mode
+     block below. The nav strip and every photo backdrop's scrim are void
+     (dark) in BOTH themes, so text sitting on them needs a color that
+     stays light regardless of which theme is active — the general text
+     tokens above are the wrong tool there since they flip to dark ink in
+     the lore theme. Used for the nav bar, mobile menu, and any caption
+     that overlays a photo rather than the flat page background. */
+  --color-paper: #f6ecd2;
+  --color-paper-dim: #d9c7a0;
+  --color-nav-accent: #e8b84b;
+
+  /* Stable "on dark" rivalry colors — same idea as --color-paper above,
+     for the one spot the rivalry accent colors themselves (not just body
+     text) sit directly on a photo scrim: War Mode's circuit history copy.
+     --color-adi/--color-ren stay tuned for the lore theme's parchment
+     (dark, low-chroma ink, deliberately muted against paper) and would
+     read as dark-on-dark there, so this pair borrows Dark Mode's own
+     bright neon values instead of the lore palette's — already proven
+     legible on a dark backdrop (this IS Dark Mode's --color-adi/--color-ren)
+     — and is intentionally NOT overridden in the dark-mode block below. */
+  --color-adi-vivid: #ff4d2e;
+  --color-ren-vivid: #22c7f5;
+
+  --font-display: "Mayro Kart Retro", "Cinzel", "Times New Roman", serif;
+  --font-hud: "Cormorant Garamond", "Times New Roman", serif;
+  --font-body: "Alegreya", "Georgia", serif;
+  --font-stat: "Spectral", "Alegreya", serif;
+
+  --shadow-adi: 0 0 0 1px var(--color-adi-dim), 0 12px 32px -18px rgba(138, 47, 28, 0.28);
+  --shadow-ren: 0 0 0 1px var(--color-ren-dim), 0 12px 32px -18px rgba(33, 65, 95, 0.28);
+  --shadow-gold: 0 0 0 1px var(--color-gold-dim), 0 12px 32px -18px rgba(161, 122, 37, 0.3);
+  --speed-line-rgba: rgba(44, 28, 15, 0.05);
+}
+
+/* Dark Mode toggle: restores the earlier dark, modern-ish HUD theme —
+   neon rivalry colors, Orbitron/Rajdhani/the original Mario Kart F2
+   display font, and the original near-black surfaces — in place of the
+   parchment/lore look. Applied via a `data-theme="dark"` attribute on
+   <html>, set by ThemeToggle and persisted to localStorage. */
+:root[data-theme="dark"] {
+  --color-void: #050507;
+  --color-bg: #0a0a0d;
+  --color-surface: #121218;
+  --color-surface-raised: #191922;
+  --color-surface-hover: #202030;
+  --color-border: #26262f;
+  --color-border-strong: #35353f;
+
+  --color-text: #f3f3f6;
+  --color-text-dim: #9a9aa8;
+  --color-text-faint: #5f5f6c;
+
+  --color-adi: #ff4d2e;
+  --color-adi-dim: #7a2718;
+  --color-adi-glow: #ff6b4a;
+  --color-ren: #22c7f5;
+  --color-ren-dim: #144a5c;
+  --color-ren-glow: #5adcff;
+
+  --color-gold: #ffc93c;
+  --color-gold-dim: #6b5416;
+  --color-emerald: #33d17a;
+  --color-danger: #ff4757;
+
+  /* Headings/labels stay identical to the light/lore theme — Dark Mode
+     isn't a separate typographic identity, so --font-display/--font-hud
+     are intentionally NOT overridden here. Numbers are the one exception:
+     Rajdhani is a clean, digit-friendly semi-condensed face that reads as
+     HUD-ish without tipping into full sci-fi (Orbitron, this theme's
+     previous stat font, is kept only as its own fallback — legible but a
+     lot louder at a whole table of figures). */
+  --font-stat: "Rajdhani", "Orbitron", "Arial Narrow", sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+
+  --shadow-adi: 0 0 0 1px var(--color-adi-dim), 0 12px 32px -18px rgba(255, 77, 46, 0.22);
+  --shadow-ren: 0 0 0 1px var(--color-ren-dim), 0 12px 32px -18px rgba(34, 199, 245, 0.22);
+  --shadow-gold: 0 0 0 1px var(--color-gold-dim), 0 12px 32px -18px rgba(255, 201, 60, 0.25);
+  --speed-line-rgba: rgba(255, 255, 255, 0.035);
+}
+
+@theme inline {
+  --color-void: var(--color-void);
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-hover: var(--color-surface-hover);
+  --color-border: var(--color-border);
+  --color-border-strong: var(--color-border-strong);
+  --color-text: var(--color-text);
+  --color-text-dim: var(--color-text-dim);
+  --color-text-faint: var(--color-text-faint);
+  --color-adi: var(--color-adi);
+  --color-adi-dim: var(--color-adi-dim);
+  --color-adi-glow: var(--color-adi-glow);
+  --color-ren: var(--color-ren);
+  --color-ren-dim: var(--color-ren-dim);
+  --color-ren-glow: var(--color-ren-glow);
+  --color-gold: var(--color-gold);
+  --color-gold-dim: var(--color-gold-dim);
+  --color-emerald: var(--color-emerald);
+  --color-danger: var(--color-danger);
+  --color-paper: var(--color-paper);
+  --color-paper-dim: var(--color-paper-dim);
+  --color-nav-accent: var(--color-nav-accent);
+  --font-display: var(--font-display);
+  --font-hud: var(--font-hud);
+  --font-body: var(--font-body);
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+html {
+  color-scheme: light;
+  /* A gentle across-the-board size bump — rem-based body copy and stat
+     numbers read larger, while the fixed-px captions/labels are
+     unaffected since they don't scale with the root font size. */
+  font-size: 112%;
+  /* Several decorative touches (the hero's bleed-halo/bleed-wash glow,
+     the trophy scrolls' rod end-caps) are deliberately sized/positioned
+     past their container's edge so they fade out softly rather than
+     stopping at a hard line — fine on wide screens, but on a narrow
+     mobile viewport that same overhang stretches the page wide enough to
+     make the whole site pan sideways. Clipping it here keeps the bleed
+     effect intact while guaranteeing no horizontal scroll anywhere. */
+  overflow-x: hidden;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 1.0625rem;
+  min-height: 100dvh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Watercolor papyrus ground (lore theme): soft, blurred pigment mottling
+   — like washi paper unevenly soaking up ink washes — rather than a
+   sharp digital grain, plus a faint vignette toward the edges. Fixed so
+   it reads as the physical sheet the whole app is written on, not a
+   scrolling background image. Swapped for a plain speed-line/glow
+   backdrop in Dark Mode below. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(ellipse 55% 40% at 12% 8%, rgba(133, 106, 60, 0.16), transparent 60%),
+    radial-gradient(ellipse 45% 35% at 92% 14%, rgba(140, 47, 28, 0.06), transparent 65%),
+    radial-gradient(ellipse 50% 42% at 85% 92%, rgba(133, 106, 60, 0.14), transparent 60%),
+    radial-gradient(ellipse 60% 45% at 6% 88%, rgba(33, 65, 95, 0.05), transparent 65%),
+    radial-gradient(ellipse 140% 90% at 50% 50%, transparent 55%, rgba(28, 19, 10, 0.1) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='480'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.01' numOctaves='2' seed='9' stitchTiles='stitch' result='t'/%3E%3CfeGaussianBlur in='t' stdDeviation='3.5' result='b'/%3E%3CfeColorMatrix in='b' type='matrix' values='0 0 0 0 0.53  0 0 0 0 0.4  0 0 0 0 0.21  0 0 0 0.3 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, repeat;
+  background-size: cover, cover, cover, cover, cover, 480px 480px;
+  opacity: 1;
+  mix-blend-mode: multiply;
+}
+:root[data-theme="dark"] body::before {
+  background-image:
+    radial-gradient(ellipse 120% 60% at 50% -10%, rgba(255, 77, 46, 0.04), transparent 60%),
+    radial-gradient(ellipse 120% 60% at 100% 110%, rgba(34, 199, 245, 0.035), transparent 60%);
+  background-size: cover, cover;
+  background-repeat: no-repeat, no-repeat;
+  mix-blend-mode: normal;
+}
+
+#__next-app-root,
+main {
+  position: relative;
+  z-index: 1;
+}
+
+::selection {
+  background: var(--color-gold);
+  color: var(--color-bg);
+}
+
+/* Thin scrollbars matching the theme */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) var(--color-bg);
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: var(--color-bg); }
+*::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 999px; }
+
+.font-display { font-family: var(--font-display); }
+.font-hud { font-family: var(--font-hud); }
+/* NOTE: the other font file shipped in /fonts, "Mario Kart F2", is not
+   wired up here — its letter glyphs (checked via font metrics: nearly
+   every lowercase/uppercase letter, s/t/n/d/r/h included) have bounding
+   boxes 1.1-1.4x the font's own em-square, while its digits are normal.
+   That's a broken/corrupted font file, not a browser quirk — it renders
+   mangled, oversized letters wherever text like "1st"/"2nd" hits those
+   glyphs, in any browser. Left unused until a working replacement file
+   is provided; --font-display ("Mayro Kart Retro") is the game-branded
+   face that actually works and is used everywhere instead. */
+
+.text-stat {
+  font-family: var(--font-stat);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* See --color-adi-vivid/--color-ren-vivid above: for rivalry-colored text
+   that sits directly on a photo scrim rather than a paper surface. */
+.text-adi-vivid { color: var(--color-adi-vivid); }
+.text-ren-vivid { color: var(--color-ren-vivid); }
+
+/* Faint ruled/chevron grain, used as a decorative background utility on
+   cards — reads as the ribbed texture of laid paper in the lore theme, or
+   the original faint speed-line motif in Dark Mode. */
+.speed-lines {
+  background-image: repeating-linear-gradient(
+    115deg,
+    var(--speed-line-rgba) 0px,
+    var(--speed-line-rgba) 1px,
+    transparent 1px,
+    transparent 14px
+  );
+}
+
+/* Loading placeholder for WatercolorImage — covers the canvas/img while
+   the source photo downloads, the watercolor effect module loads, and
+   the reveal is about to start (that chain has no visual output of its
+   own otherwise, which is what made photo-heavy screens feel like they
+   were hanging). A slow diagonal shimmer over the theme's own surface
+   tones, so it reads as "loading" rather than a dead gray box, and
+   cross-fades out (see the transition-opacity utility on the element
+   itself) once the real content is ready to paint. */
+@keyframes shimmer-sweep {
+  0% { background-position: -150% 0; }
+  100% { background-position: 150% 0; }
+}
+.skeleton-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-surface) 35%,
+    var(--color-surface-raised) 50%,
+    var(--color-surface) 65%
+  );
+  background-size: 250% 100%;
+  animation: shimmer-sweep 1.7s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer { animation: none; background-position: 0 0; }
+}
+
+/* Slow, subtle background drift for full-bleed photo backdrops (War
+   Mode's selected track) — reads as gently alive rather than static, never
+   flashy. Neutralized automatically by the reduced-motion rule below. */
+@keyframes slow-drift {
+  0% { transform: scale(1) translate(0, 0); }
+  100% { transform: scale(1.06) translate(-1.5%, -1.5%); }
+}
+.animate-slow-drift {
+  animation: slow-drift 26s ease-in-out infinite alternate;
+}
+
+/* Quiet flicker for decorative ember/ink-fleck points scattered over the
+   dashboard backdrop — a slow opacity pulse, like candlelight, never a
+   flash. */
+@keyframes twinkle {
+  0%, 100% { opacity: 0.15; transform: scale(0.85); }
+  50% { opacity: 0.75; transform: scale(1.15); }
+}
+.animate-twinkle {
+  animation: twinkle 3.4s ease-in-out infinite;
+}
+
+/* A quiet edge tint instead of a heavy bloom, so cards read as an
+   illuminated page (or, in Dark Mode, the original understated glow). */
+.card-glow-adi { box-shadow: var(--shadow-adi); }
+.card-glow-ren { box-shadow: var(--shadow-ren); }
+.card-glow-gold { box-shadow: var(--shadow-gold); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ===========================================================================
+   ANCIENT SCROLL DASHBOARD CARDS + WATERCOLOR HERO
+   Requires <ScrollFilters /> (SVG filter defs) mounted once per page.
+   =========================================================================== */
+
+/* --- timing ------------------------------------------------------------- */
+@keyframes scroll-unroll {
+  from { clip-path: inset(0 0 100% 0); }
+  to   { clip-path: inset(0 0 0 0); }
+}
+/* travels the full sheet height — used by the curl shadow INSIDE the sheet */
+@keyframes scroll-edge-drop {
+  from { transform: translateY(calc(-1 * var(--sheet-h))); }
+  to   { transform: translateY(0); }
+}
+/* stops 30px short so the bottom rod parks under the top rod when rolled */
+@keyframes scroll-rod-drop {
+  from { transform: translateY(calc(30px - var(--sheet-h))); }
+  to   { transform: translateY(0); }
+}
+@keyframes scroll-coil-unwind {
+  from { height: 40px; opacity: 1; }
+  88%  { opacity: 1; }
+  to   { height: 0; opacity: 0; }
+}
+@keyframes scroll-ink-in {
+  from { opacity: 0; filter: blur(3px); }
+  to   { opacity: 1; filter: blur(0); }
+}
+/* watercolor bleed: pigment blooms outward from the centre of the line */
+@keyframes watercolor-bleed {
+  0%   { -webkit-mask-size: 0% 0%;     mask-size: 0% 0%;     opacity: 0.25; }
+  45%  { opacity: 0.9; }
+  100% { -webkit-mask-size: 460% 460%; mask-size: 460% 460%; opacity: 1; }
+}
+@keyframes watercolor-wash {
+  0%   { transform: scale(0.2); opacity: 0; }
+  40%  { opacity: 0.45; }
+  100% { transform: scale(1); opacity: 0.24; }
+}
+/* --- watercolor draw-on for the hero lines ------------------------------- */
+.bleed-in {
+  -webkit-mask-image: radial-gradient(closest-side, #000 42%, rgba(0, 0, 0, 0.7) 72%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 42%, rgba(0, 0, 0, 0.7) 72%, transparent 100%);
+  -webkit-mask-position: 50% 50%;
+  mask-position: 50% 50%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  filter: url(#wetpaper-soft);
+  animation: watercolor-bleed 1.8s cubic-bezier(0.3, 0.9, 0.4, 1) both;
+}
+/* heavier displacement for display type */
+.bleed-in-display {
+  filter: url(#wetpaper);
+}
+/* the ink wash that blooms behind the headline */
+.bleed-wash {
+  filter: url(#wetpaper) blur(28px);
+  background:
+    radial-gradient(ellipse at 34% 45%, rgba(138, 47, 28, 0.26), transparent 62%),
+    radial-gradient(ellipse at 68% 55%, rgba(33, 65, 95, 0.22), transparent 60%);
+  animation: watercolor-wash 2.6s cubic-bezier(0.22, 1, 0.36, 1) 0.2s both;
+}
+/* paper halo that lifts the hero copy off the photo backdrop */
+.bleed-halo {
+  background: radial-gradient(closest-side, rgba(250, 244, 228, 0.92), rgba(250, 244, 228, 0.55) 58%, transparent 100%);
+  filter: blur(6px);
+}
+/* the ragged colour-bleed halo behind a blooming portrait — an ambient
+   glow, independent of the photo itself now that the painting-in is done
+   by the live canvas effect (see WatercolorImage) rather than a CSS mask
+   growing over a pre-stylized image. Blur runs
+   FIRST so the turbulence in #inkbloom has a soft field to distort —
+   distorting first and blurring after just smooths the raggedness back
+   out. A much wider displacement than wetpaper is safe here because it
+   only ever tears up a soft glow, never the photo or a glyph. Two
+   strengths for the two overlapping pulses in StoryIntro. */
+.fringe-bloom {
+  filter: blur(19px) url(#inkbloom);
+}
+.fringe-bloom-soft {
+  filter: blur(12px) url(#inkbloom);
+}
+/* --- the scroll ---------------------------------------------------------- */
+.scroll-v {
+  --sheet-h: 430px;
+  --unroll: 1.7s;
+  position: relative;
+  padding: 26px 0 30px;
+}
+
+/* soft cast shadow on the wall behind the sheet; revealed with the unroll */
+.scroll-v__shadow {
+  position: absolute;
+  left: 8px; right: 8px; top: 40px; bottom: 44px;
+  z-index: 0;
+  border-radius: 4px;
+  background: rgba(28, 19, 10, 0.3);
+  filter: blur(16px);
+  transform: translateY(10px);
+  animation: scroll-unroll var(--unroll) cubic-bezier(0.32, 0.06, 0.18, 1) both;
+  animation-delay: inherit;
+}
+
+.scroll-v__sheet {
+  position: relative;
+  z-index: 5;
+  height: var(--sheet-h);
+  animation: scroll-unroll var(--unroll) cubic-bezier(0.32, 0.06, 0.18, 1) both;
+  animation-delay: inherit;
+}
+
+/* aged paper: foxing stains, cylindrical shading, roll-memory creases,
+   fibre grain, laid lines. The SVG displacement filter tears the sides. */
+.scroll-v__paper {
+  position: absolute;
+  inset: 0 6px;
+  filter: url(#tornedge);
+  background-color: #e7d8ab;
+  background-image:
+    radial-gradient(ellipse 22% 9% at 78% 17%, rgba(122, 86, 38, 0.2), transparent 70%),
+    radial-gradient(ellipse 14% 5% at 22% 41%, rgba(122, 86, 38, 0.16), transparent 70%),
+    radial-gradient(ellipse 26% 11% at 38% 88%, rgba(104, 72, 30, 0.17), transparent 72%),
+    radial-gradient(ellipse 9% 4% at 63% 61%, rgba(138, 90, 40, 0.18), transparent 70%),
+    linear-gradient(90deg,
+      rgba(28, 19, 10, 0.26) 0%, rgba(28, 19, 10, 0.06) 4%,
+      rgba(255, 255, 255, 0.34) 15%, rgba(255, 255, 255, 0.1) 46%,
+      rgba(28, 19, 10, 0.05) 74%, rgba(28, 19, 10, 0.12) 92%, rgba(28, 19, 10, 0.3) 100%),
+    repeating-linear-gradient(180deg,
+      rgba(28, 19, 10, 0.06) 0px, rgba(28, 19, 10, 0.06) 1px,
+      rgba(255, 255, 255, 0.16) 2px, rgba(255, 255, 255, 0.05) 4px,
+      transparent 5px, transparent 47px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='x'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.32  0 0 0 0 0.24  0 0 0 0 0.12  0 0 0 0.42 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23x)'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(115deg,
+      rgba(44, 28, 15, 0.05) 0px, rgba(44, 28, 15, 0.05) 1px,
+      transparent 1px, transparent 14px);
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, repeat, repeat, repeat;
+  background-size: auto, auto, auto, auto, 100% 100%, 100% 47px, 160px 160px, auto;
+  background-blend-mode: multiply, multiply, multiply, multiply, normal, normal, multiply, normal;
+  box-shadow:
+    inset 0 16px 20px -16px rgba(28, 19, 10, 0.8),
+    inset 0 -16px 22px -16px rgba(28, 19, 10, 0.85),
+    inset 0 0 40px -6px rgba(133, 106, 60, 0.4);
+}
+
+/* three slightly-off-horizontal creases from being folded/rolled */
+.scroll-v__creases {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(178deg, transparent 0 21%, rgba(28, 19, 10, 0.09) 21.2%, rgba(255, 255, 255, 0.22) 21.7%, transparent 22.2%),
+    linear-gradient(181.4deg, transparent 0 63%, rgba(28, 19, 10, 0.08) 63.2%, rgba(255, 255, 255, 0.2) 63.6%, transparent 64.1%),
+    linear-gradient(179deg, transparent 0 84%, rgba(28, 19, 10, 0.07) 84.2%, rgba(255, 255, 255, 0.18) 84.6%, transparent 85%);
+}
+
+/* shadow that rides the unrolling edge — lives INSIDE the clipped sheet */
+.scroll-v__curl {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 30px;
+  z-index: 6;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(28, 19, 10, 0.3), rgba(28, 19, 10, 0.05) 65%, transparent);
+  animation: scroll-edge-drop var(--unroll) cubic-bezier(0.32, 0.06, 0.18, 1) both;
+  animation-delay: inherit;
+}
+
+.scroll-v__body {
+  position: relative;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 40px 30px 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: scroll-ink-in 1.1s ease-out both;
+  animation-delay: var(--content-delay, 0.85s);
+}
+
+/* --- rods ---------------------------------------------------------------- */
+.scroll-v__rod {
+  position: absolute;
+  left: -16px; right: -16px;
+  height: 26px;
+  z-index: 20;
+}
+.scroll-v__rod--top { top: 16px; }
+.scroll-v__rod--bottom {
+  bottom: 18px;
+  animation: scroll-rod-drop var(--unroll) cubic-bezier(0.32, 0.06, 0.18, 1) both;
+  animation-delay: inherit;
+}
+
+/* lacquered wood: nicked silhouette (mask), lengthwise grain, cross
+   scratches, end grooves, matte cylinder shading, grit overlay */
+.scroll-v__rod-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 13px / 13px;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='26' preserveAspectRatio='none'%3E%3Cfilter id='r' x='-6%25' y='-30%25' width='112%25' height='160%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.06 0.9' numOctaves='3' seed='3' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='3.2' xChannelSelector='R' yChannelSelector='G'/%3E%3C/filter%3E%3Crect x='1' y='3' width='298' height='20' rx='10' fill='white' filter='url(%23r)'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='26' preserveAspectRatio='none'%3E%3Cfilter id='r' x='-6%25' y='-30%25' width='112%25' height='160%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.06 0.9' numOctaves='3' seed='3' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='3.2' xChannelSelector='R' yChannelSelector='G'/%3E%3C/filter%3E%3Crect x='1' y='3' width='298' height='20' rx='10' fill='white' filter='url(%23r)'/%3E%3C/svg%3E");
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='x'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.08  0 0 0 0 0.04  0 0 0 0 0.02  0 0 0 0.55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23x)'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0 1px, rgba(0, 0, 0, 0.13) 1px 2px, transparent 2px 5px),
+    repeating-linear-gradient(88deg, rgba(0, 0, 0, 0.1) 0 2px, transparent 2px 23px),
+    linear-gradient(90deg,
+      rgba(0, 0, 0, 0.55) 0 4px, rgba(0, 0, 0, 0.18) 4px 9px,
+      transparent 9px calc(100% - 9px),
+      rgba(0, 0, 0, 0.18) calc(100% - 9px) calc(100% - 4px), rgba(0, 0, 0, 0.55) calc(100% - 4px) 100%),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0) 6%, rgba(255, 255, 255, 0.04) 34%, rgba(0, 0, 0, 0.05) 68%, rgba(0, 0, 0, 0) 94%, rgba(0, 0, 0, 0.45) 100%),
+    linear-gradient(180deg, #3a0b06 0%, #6d1a11 11%, #9c2f22 27%, #c9705c 35%, #a53c2c 45%, #7b2015 67%, #4a0f09 86%, #260604 100%);
+  background-size: 120px 120px, auto, auto, auto, auto, auto;
+  background-blend-mode: overlay, normal, multiply, multiply, normal, normal;
+  box-shadow: 0 7px 14px -7px rgba(28, 19, 10, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+.scroll-v__rod--bottom .scroll-v__rod-face {
+  box-shadow: 0 9px 18px -8px rgba(28, 19, 10, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+/* carved end cap — recessed centre, rim highlight, off-round silhouette */
+.scroll-v__cap {
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  border-radius: 51% 49% 50% 50% / 49% 51% 50% 50%;
+  transform: translateY(-50%) rotate(-3deg);
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Cfilter id='x'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.1  0 0 0 0 0.05  0 0 0 0 0.03  0 0 0 0.55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23x)'/%3E%3C/svg%3E"),
+    repeating-radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0.12) 0 1px, transparent 1px 3px),
+    radial-gradient(circle at 50% 50%, #2c0705 0%, #4d1009 26%, #8b2618 44%, #a83626 56%, #b34430 72%, #7a1e13 88%, #3a0b06 100%);
+  background-size: 40px 40px, auto, auto;
+  background-blend-mode: overlay, multiply, normal;
+  box-shadow:
+    inset 2px 3px 7px rgba(0, 0, 0, 0.75),
+    inset -2px -2px 5px rgba(255, 255, 255, 0.16),
+    inset 0 0 0 3px rgba(0, 0, 0, 0.22),
+    0 3px 7px rgba(0, 0, 0, 0.5);
+}
+.scroll-v__cap--left { left: -8px; }
+.scroll-v__cap--right { right: -8px; }
+
+/* the still-wound paper around the bottom rod; unwinds as the sheet opens.
+   --sheet-h is overridden here so the coil parks under the top rod too. */
+.scroll-v__coil {
+  --sheet-h: 390px;
+  position: absolute;
+  left: 3px; right: 3px;
+  bottom: 44px;
+  z-index: 18;
+  border-radius: 5px 5px 3px 3px;
+  overflow: hidden;
+  background-image:
+    repeating-linear-gradient(180deg, rgba(28, 19, 10, 0.13) 0 1px, rgba(255, 255, 255, 0.22) 1px 2px, transparent 2px 7px),
+    linear-gradient(180deg, #d8c59a 0%, #c9b384 45%, #a98f5c 100%);
+  box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.3), 0 4px 10px -5px rgba(28, 19, 10, 0.7);
+  animation:
+    scroll-rod-drop var(--unroll) cubic-bezier(0.32, 0.06, 0.18, 1) both,
+    scroll-coil-unwind var(--unroll) cubic-bezier(0.32, 0.06, 0.18, 1) both;
+  animation-delay: inherit;
+}
+
+/* --- dark mode: no scroll motif, plain panel ----------------------------- */
+:root[data-theme="dark"] .scroll-v { padding: 0; }
+:root[data-theme="dark"] .scroll-v__rod,
+:root[data-theme="dark"] .scroll-v__coil,
+:root[data-theme="dark"] .scroll-v__curl,
+:root[data-theme="dark"] .scroll-v__creases,
+:root[data-theme="dark"] .scroll-v__shadow { display: none; }
+:root[data-theme="dark"] .scroll-v__sheet { animation: none; height: auto; min-height: 280px; }
+:root[data-theme="dark"] .scroll-v__paper {
+  filter: none;
+  inset: 0;
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-surface);
+  background-image: none;
+  box-shadow: none;
+}
+/* Dark Mode keeps the hero text's paper-bleed mask off — the parchment
+   theme's page-turn pacing, not its snappier modern-HUD feel. (The photo
+   effect's own instant-vs-animated split is a WatercolorImage prop, not
+   CSS — see its `instant` usage at each call site.) */
+:root[data-theme="dark"] .bleed-in,
+:root[data-theme="dark"] .bleed-in-display {
+  -webkit-mask-image: none;
+  mask-image: none;
+  filter: none;
+  animation: none;
+}
+:root[data-theme="dark"] .bleed-wash,
+:root[data-theme="dark"] .bleed-halo { display: none; }

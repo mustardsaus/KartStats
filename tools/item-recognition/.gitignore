@@ -1,0 +1,5 @@
+venv/
+output/*.png
+output/events.json
+__pycache__/
+*.pyc
