@@ -6,7 +6,7 @@ import { isValidFinishingPosition } from "@/lib/stats/points";
 import type { DriverId, ItemId, PlayerId } from "@/lib/types";
 import { RACES_PER_SEASON } from "@/lib/types";
 import { revalidatePath } from "next/cache";
-import { completeSeasonIfFull } from "./actions";
+import { completeSeasonIfFull, computeAndCompleteSeason } from "./actions";
 
 /** "Engage in battle?" — starts a new battle-mode season with a fresh code, or returns the one already in progress. driverCount 3 adds the guest ("Prawns") seat; defaults to the ordinary 2-driver battle. */
 export async function engageBattleAction(driverCount: 2 | 3 = 2) {
@@ -56,6 +56,28 @@ export async function abandonBattleAction(seasonId: string) {
   await store.deleteEmptySeason(seasonId);
   revalidatePath("/war-mode");
   return { abandoned: true };
+}
+
+/**
+ * Admin-only escape hatch for ending a battle that's already underway —
+ * "started by accident, or we're just stopping here." Marks the season
+ * complete right now using whatever races have actually been recorded
+ * (via the same real winner-computation logic every other completion
+ * path uses — computeAndCompleteSeason, src/app/war-mode/actions.ts),
+ * rather than discarding them. A season with zero races should go
+ * through abandonBattleAction instead (deletes it outright, no
+ * "0-0 tie" season left behind) — this rejects that case so the two
+ * don't overlap.
+ */
+export async function endBattleEarlyAction(seasonId: string) {
+  const store = getStore();
+  const races = (await store.getRacesBySeasonId()).get(seasonId) ?? [];
+  if (races.length === 0) {
+    return { error: "No races recorded yet — use \"Cancel battle\" instead to discard it entirely." };
+  }
+  await computeAndCompleteSeason(seasonId);
+  revalidatePath("/war-mode");
+  return { ended: true };
 }
 
 /**
@@ -176,12 +198,13 @@ export async function setPowerupCountAction(roundId: string, playerId: DriverId,
 /**
  * Refetch of the parts of battle state that actually change during a
  * season — called on mount and on every Realtime signal, so this runs on
- * every single blue-shell tap and power-up count too. Deliberately does
- * NOT refetch circuits or the points mapping: those are static for the
- * life of a season, the caller already has them from its initial page
- * load as props, and re-fetching both on every tap was pure wasted
- * round-trip latency — a real, felt contributor to Battle Mode feeling
- * slow during live play.
+ * every single blue-shell tap too. Deliberately does NOT refetch circuits
+ * or the points mapping: those are static for the life of a season, the
+ * caller already has them from its initial page load as props, and
+ * re-fetching both on every tap was pure wasted round-trip latency — a
+ * real, felt contributor to Battle Mode feeling slow during live play.
+ * Also doesn't fetch round power-ups — nothing in the UI logs or
+ * displays them live anymore (see Cockpit.tsx).
  */
 export async function getBattleStateAction(seasonId: string) {
   const store = getStore();
@@ -192,6 +215,5 @@ export async function getBattleStateAction(seasonId: string) {
   ]);
   const season = seasons.find((s) => s.id === seasonId) ?? null;
   const races = racesBySeasonId.get(seasonId) ?? [];
-  const roundPowerups = activeRound ? await store.getRoundPowerups(activeRound.id) : [];
-  return { season, races, activeRound, roundPowerups };
+  return { season, races, activeRound };
 }

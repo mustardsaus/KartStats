@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { BattleRound, Circuit, PointsMapping, RawRace, RawSeason, RoundPowerup } from "@/lib/types";
+import type { BattleRound, Circuit, PointsMapping, RawRace, RawSeason } from "@/lib/types";
 import { RACES_PER_SEASON } from "@/lib/types";
 import { getBattleStateAction, pickTrackAction } from "@/app/war-mode/battle-actions";
 import { useBattleRealtime } from "@/lib/hooks/useBattleRealtime";
@@ -70,7 +70,6 @@ export function BattleModeClient({
   const [season, setSeason] = useState(initialSeason);
   const [races, setRaces] = useState(initialRaces);
   const [activeRound, setActiveRound] = useState<BattleRound | null>(null);
-  const [roundPowerups, setRoundPowerups] = useState<RoundPowerup[]>([]);
   const [identity, setIdentity] = useState<BattleIdentity | null>(null);
   const [identityLoaded, setIdentityLoaded] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -121,7 +120,6 @@ export function BattleModeClient({
     setSeason(state.season);
     setRaces(state.races);
     setActiveRound(state.activeRound);
-    setRoundPowerups(state.roundPowerups);
   }, [initialSeason.id, router]);
 
   useBattleRealtime(season.id, refresh);
@@ -137,7 +135,14 @@ export function BattleModeClient({
     setIdentity(null);
   };
 
-  const handleAbandoned = () => {
+  // Shared success handler for every way a battle can end from this
+  // device: WaitingRoom's "Cancel battle" (0 races, deletes outright),
+  // and EndBattleControl from either the track-picker or the cockpit
+  // (0 races -> same delete; 1+ races -> completes the season now with
+  // whatever's been played). Either way there's no season left for this
+  // identity to resume into, so clear it and refresh back to the landing
+  // page.
+  const handleBattleEnded = () => {
     clearStoredIdentity();
     router.refresh();
   };
@@ -162,7 +167,7 @@ export function BattleModeClient({
         season={season}
         myPlayerId={identity.playerId}
         onSwitchPlayer={handleSwitchPlayer}
-        onAbandoned={handleAbandoned}
+        onAbandoned={handleBattleEnded}
         canAbandon={races.length === 0}
       />
     );
@@ -220,16 +225,20 @@ export function BattleModeClient({
             historicalRacesBySeasonId={historicalRacesBySeasonId}
             circuits={circuits}
             pointsMapping={pointsMapping}
-            roundPowerups={roundPowerups}
+            isAdmin={isAdmin}
             onChanged={refresh}
+            onEnded={handleBattleEnded}
           />
         ) : (
           <TrackPicker
+            seasonId={season.id}
+            raceCount={races.length}
             circuits={circuits}
             raceNumber={races.length + 1}
             isAdmin={isAdmin}
             adminName={adminName}
             onSelect={handlePickTrack}
+            onEnded={handleBattleEnded}
             pending={pending}
           />
         )}

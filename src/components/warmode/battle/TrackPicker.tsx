@@ -2,6 +2,7 @@
 
 import type { Circuit } from "@/lib/types";
 import { CircuitPicker } from "@/components/warmode/CircuitPicker";
+import { EndBattleControl } from "./EndBattleControl";
 import { Loader2 } from "lucide-react";
 
 /**
@@ -12,18 +13,24 @@ import { Loader2 } from "lucide-react";
  * (BattleModeClient) renders this inside the shared BattleScreen wrapper.
  */
 export function TrackPicker({
+  seasonId,
+  raceCount,
   circuits,
   raceNumber,
   isAdmin,
   adminName,
   onSelect,
+  onEnded,
   pending,
 }: {
+  seasonId: string;
+  raceCount: number;
   circuits: Circuit[];
   raceNumber: number;
   isAdmin: boolean;
   adminName: string;
   onSelect: (circuitId: string) => void;
+  onEnded: () => void;
   pending: boolean;
 }) {
   if (!isAdmin) {
@@ -37,14 +44,17 @@ export function TrackPicker({
   }
 
   return (
-    <div className="flex items-center justify-center min-h-[50vh] py-10">
+    <div className="flex flex-col items-center justify-center min-h-[50vh] py-10 gap-6">
       {pending ? (
         <div className="text-center">
           <Loader2 className="h-8 w-8 text-danger mx-auto mb-4 animate-spin" />
           <p className="text-paper/70 text-sm">Loading the track…</p>
         </div>
       ) : (
-        <CircuitPicker circuits={circuits} raceNumber={raceNumber} onSelect={onSelect} />
+        <>
+          <CircuitPicker circuits={circuits} raceNumber={raceNumber} onSelect={onSelect} />
+          <EndBattleControl seasonId={seasonId} raceCount={raceCount} isAdmin={isAdmin} onEnded={onEnded} />
+        </>
       )}
     </div>
   );

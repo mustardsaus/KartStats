@@ -17,18 +17,17 @@ export async function startSeasonAction() {
 }
 
 /**
- * If a season has hit its 32nd race, marks it complete with the computed
- * winner/final points cached on the row. Shared by the solo addRaceAction
- * below and Battle Mode's round-finalize sequence
- * (src/app/war-mode/battle-actions.ts) so both paths use the exact same
- * winner-computation logic rather than duplicating it. Returns whether
- * the season was completed by this call.
+ * Computes the winner/final points from whatever races a season actually
+ * has and marks it complete with that cached on the row. Shared by
+ * completeSeasonIfFull below (the normal "hit 32 races" path) and
+ * endBattleEarlyAction (src/app/war-mode/battle-actions.ts — ending a
+ * battle before it reaches 32), so every path that completes a season
+ * uses the exact same real winner-computation logic — reading the
+ * season's actual configured points mapping rather than guessing at one.
  */
-export async function completeSeasonIfFull(seasonId: string): Promise<boolean> {
+export async function computeAndCompleteSeason(seasonId: string): Promise<void> {
   const store = getStore();
   const races = (await store.getRacesBySeasonId()).get(seasonId) ?? [];
-  if (races.length < RACES_PER_SEASON) return false;
-
   const circuits = await store.getCircuits();
   const pointsMapping = await store.getPointsMapping();
   const circuitsById = new Map(circuits.map((c) => [c.id, c]));
@@ -36,6 +35,19 @@ export async function completeSeasonIfFull(seasonId: string): Promise<boolean> {
   const { adiTotal, renTotal } = calculateSeasonTotals(raceStats);
   const winner = determineSeasonWinner(adiTotal, renTotal);
   await store.completeSeason(seasonId, { winnerId: winner, adiFinalPoints: adiTotal, renFinalPoints: renTotal });
+}
+
+/**
+ * If a season has hit its 32nd race, marks it complete. Shared by the
+ * solo addRaceAction below and Battle Mode's round-finalize sequence
+ * (src/app/war-mode/battle-actions.ts). Returns whether the season was
+ * completed by this call.
+ */
+export async function completeSeasonIfFull(seasonId: string): Promise<boolean> {
+  const store = getStore();
+  const races = (await store.getRacesBySeasonId()).get(seasonId) ?? [];
+  if (races.length < RACES_PER_SEASON) return false;
+  await computeAndCompleteSeason(seasonId);
   return true;
 }
 
