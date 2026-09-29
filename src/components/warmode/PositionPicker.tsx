@@ -4,7 +4,9 @@ import { tapPulse } from "@/lib/animation";
 import { cn } from "@/lib/utils";
 
 const POSITIONS = Array.from({ length: 12 }, (_, i) => i + 1);
-const ORDINALS = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "11th", "12th"];
+// Exported so the confirmation step in RaceEntryForm can render the same
+// ordinal labels the picker grid uses, instead of re-deriving them.
+export const ORDINALS = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "11th", "12th"];
 
 /**
  * A 1st-12th finishing-position grid for one player: two rows of six big
