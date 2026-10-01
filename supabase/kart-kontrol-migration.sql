@@ -37,12 +37,24 @@ alter table battle_rounds
   add column if not exists ren_transmission text check (ren_transmission in ('automatic', 'manual'));
 
 -- ---------------------------------------------------------------------------
--- Verify: every column should show up exactly once per table, all nullable.
+-- Part 2: battle_rounds.circuit_id becomes nullable.
+--
+-- Loadout now gets collected BEFORE the track is picked, matching the real
+-- game's character-then-course order — so a round can briefly exist with
+-- no circuit yet. races.circuit_id stays NOT NULL (a race is never
+-- finalized without a track). Safe to run even if you already ran Part 1
+-- above — every statement here is idempotent too.
+alter table battle_rounds alter column circuit_id drop not null;
+
+-- ---------------------------------------------------------------------------
+-- Verify: every loadout column shows up exactly once per table, all
+-- nullable, and battle_rounds.circuit_id is nullable too.
 select table_name, column_name, is_nullable, data_type
 from information_schema.columns
 where table_name in ('races', 'battle_rounds')
   and column_name in (
     'adi_character', 'adi_kart', 'adi_transmission',
-    'ren_character', 'ren_kart', 'ren_transmission'
+    'ren_character', 'ren_kart', 'ren_transmission',
+    'circuit_id'
   )
 order by table_name, column_name;

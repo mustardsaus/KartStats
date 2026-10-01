@@ -224,7 +224,7 @@ export const localStore: DataStore = {
     return null;
   },
 
-  async startRound(seasonId, circuitId) {
+  async startRound(seasonId) {
     const existing = await localStore.getActiveRound(seasonId);
     if (existing) throw new Error("A round is already in progress for this season.");
     const season = state.seasons.find((s) => s.id === seasonId);
@@ -236,7 +236,7 @@ export const localStore: DataStore = {
       id: `round-${seasonId}-${Date.now()}`,
       seasonId,
       raceNumber: races.length + 1,
-      circuitId,
+      circuitId: null,
       adiPosition: null,
       renPosition: null,
       adiBlueShellCount: 0,
@@ -255,6 +255,14 @@ export const localStore: DataStore = {
       renTransmission: null,
     };
     state.battleRounds.set(round.id, round);
+    return round;
+  },
+
+  async setRoundCircuit(roundId, circuitId) {
+    const round = state.battleRounds.get(roundId);
+    if (!round) throw new Error("Round not found");
+    if (round.finalizedAt) return round; // no-op, matches recordRoundPosition's idempotent behavior
+    round.circuitId = circuitId;
     return round;
   },
 

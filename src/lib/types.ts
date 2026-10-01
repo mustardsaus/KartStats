@@ -177,7 +177,15 @@ export interface BattleRound {
   id: string;
   seasonId: string;
   raceNumber: number;
-  circuitId: string;
+  /**
+   * Null until the admin picks a track for this round — which now happens
+   * AFTER both players lock in their own character/kart/transmission (see
+   * Kart Kontrol below), matching the real game's own flow of picking your
+   * racer before the course. A round always exists before a circuit does;
+   * nothing in the stats layer ever reads a BattleRound directly, so this
+   * widening doesn't touch anything outside Battle Mode's own UI.
+   */
+  circuitId: string | null;
   adiPosition: number | null;
   renPosition: number | null;
   adiBlueShellCount: number;

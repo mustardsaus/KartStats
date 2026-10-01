@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import type { BattleRound, Circuit, PointsMapping, RawRace, RawSeason } from "@/lib/types";
+import type { BattleRound, Circuit, PlayerId, PointsMapping, RawRace, RawSeason } from "@/lib/types";
 import { RACES_PER_SEASON } from "@/lib/types";
-import { getBattleStateAction, pickTrackAction } from "@/app/war-mode/battle-actions";
+import { ensurePendingRoundAction, getBattleStateAction, pickTrackAction } from "@/app/war-mode/battle-actions";
 import { useBattleRealtime } from "@/lib/hooks/useBattleRealtime";
 import { buildRaceStats, calculateSeasonTotals, determineSeasonWinner } from "@/lib/stats";
 import { calculateGuestSeasonPoints } from "@/lib/stats/guest";
@@ -14,8 +14,36 @@ import { WaitingRoom } from "./WaitingRoom";
 import { TrackPicker } from "./TrackPicker";
 import { BattleScreen } from "./BattleScreen";
 import { Cockpit } from "./Cockpit";
+import { LoadoutSetup } from "./LoadoutSetup";
+import { EndBattleControl } from "./EndBattleControl";
 import { SeasonCompletionScreen } from "../SeasonCompletionScreen";
 import { PLAYERS } from "@/lib/data/points-mapping";
+import { Loader2 } from "lucide-react";
+
+/** Has this named player locked in their own loadout for this round yet? Guest never tracks one. */
+function hasLoadout(round: BattleRound, playerId: PlayerId): boolean {
+  return playerId === "adi"
+    ? Boolean(round.adiCharacter && round.adiKart && round.adiTransmission)
+    : Boolean(round.renCharacter && round.renKart && round.renTransmission);
+}
+
+function missingLoadoutNames(round: BattleRound): string {
+  const missing: string[] = [];
+  if (!hasLoadout(round, "adi")) missing.push(PLAYERS.adi.name);
+  if (!hasLoadout(round, "ren")) missing.push(PLAYERS.ren.name);
+  return missing.join(" & ") || "the other player";
+}
+
+/** Shown to whichever device is done with its own loadout while the other player is still picking theirs. */
+function LoadoutWaiting({ round }: { round: BattleRound }) {
+  return (
+    <div className="mx-auto max-w-sm px-4 py-20 text-center">
+      <Loader2 className="h-8 w-8 text-danger mx-auto mb-4 animate-spin" />
+      <h1 className="font-display text-2xl tracking-wide text-text mb-2">Waiting on {missingLoadoutNames(round)}</h1>
+      <p className="text-text-dim text-sm">Locking in a loadout for race {round.raceNumber}.</p>
+    </div>
+  );
+}
 
 const IDENTITY_KEY = "mk-rivalry-battle-identity";
 
@@ -84,16 +112,38 @@ export function BattleModeClient({
   const { adiTotal, renTotal } = useMemo(() => calculateSeasonTotals(raceStats), [raceStats]);
   const guestTotal = useMemo(() => calculateGuestSeasonPoints(races, pointsMapping), [races, pointsMapping]);
 
-  // Slide the track-picker/cockpit content in from the side whenever the
-  // screen changes — a new round starting, or switching between picking
-  // a track and racing. Keyed on a primitive (not the activeRound object
-  // itself, which gets a fresh reference on every refresh()) so this
-  // doesn't replay on every background poll, only on an actual change.
-  const isCockpitScreen = Boolean(activeRound);
-  const screenKey = activeRound ? activeRound.id : "track";
+  // Hoisted above the early returns below (plain derivations from state,
+  // not hooks) so the ensure-pending-round effect further down — which
+  // must itself run unconditionally, in the same position every render —
+  // can read them.
+  const allJoined = Boolean(season.adiJoinedAt && season.renJoinedAt && (!season.guestEnabled || season.guestJoinedAt));
+  const seasonComplete = races.length >= RACES_PER_SEASON;
+
+  // Kart Kontrol (Season 15+): one round now passes through up to four
+  // screens in sequence — loadout picker, waiting-on-the-other-player,
+  // track picker, then racing — rather than just "track picker or
+  // cockpit", so the slide animation below needs a key that changes on
+  // every one of those hand-offs, not just when a round starts/ends.
+  // Computed from state alone (identity, activeRound) so it can sit above
+  // the early returns further down, same as allJoined/seasonComplete.
+  const phase: "opening" | "loadout" | "loadout-waiting" | "track" | "racing" = !activeRound
+    ? "opening"
+    : !activeRound.circuitId
+      ? identity && identity.playerId !== "guest" && !hasLoadout(activeRound, identity.playerId)
+        ? "loadout"
+        : !(hasLoadout(activeRound, "adi") && hasLoadout(activeRound, "ren"))
+          ? "loadout-waiting"
+          : "track"
+      : "racing";
+
+  // Slide the content in from the side whenever the screen changes.
+  // Keyed on primitives (not the activeRound object itself, which gets a
+  // fresh reference on every refresh()) so this doesn't replay on every
+  // background poll, only on an actual phase change.
+  const screenKey = activeRound ? `${activeRound.id}:${phase}` : "none";
   useEffect(() => {
-    slideIn(screenRef.current, isCockpitScreen ? 28 : -28);
-  }, [screenKey, isCockpitScreen]);
+    slideIn(screenRef.current, phase === "racing" ? 28 : -28);
+  }, [screenKey, phase]);
 
   // localStorage only exists client-side, so identity can't be resolved
   // during the initial (server) render without a hydration mismatch —
@@ -123,6 +173,25 @@ export function BattleModeClient({
   }, [initialSeason.id, router]);
 
   useBattleRealtime(season.id, refresh);
+
+  // Kart Kontrol (Season 15+): open the next round — with no track picked
+  // yet — as soon as everyone's joined, the season isn't done, and
+  // nothing's already open. Any joined device can trigger this (whichever
+  // one notices first); ensurePendingRoundAction treats a second,
+  // near-simultaneous call from the other device as a no-op rather than
+  // an error. This is what lets both players reach their own loadout
+  // picker immediately after the previous race (or right at season
+  // start), before anyone touches the track picker.
+  useEffect(() => {
+    if (!identity || !allJoined || seasonComplete || activeRound) return;
+    let cancelled = false;
+    ensurePendingRoundAction(season.id).then((result) => {
+      if (!cancelled && "round" in result) setActiveRound(result.round);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [identity, allJoined, seasonComplete, activeRound, season.id]);
 
   const handleJoined = (newIdentity: BattleIdentity) => {
     writeStoredIdentity(newIdentity);
@@ -160,7 +229,6 @@ export function BattleModeClient({
     return <JoinBattleForm season={season} onJoined={handleJoined} />;
   }
 
-  const allJoined = Boolean(season.adiJoinedAt && season.renJoinedAt && (!season.guestEnabled || season.guestJoinedAt));
   if (!allJoined) {
     return (
       <WaitingRoom
@@ -173,16 +241,15 @@ export function BattleModeClient({
     );
   }
 
-  // Once the season's 32nd race finalizes, stop rendering the track
-  // picker/cockpit entirely — otherwise a stale device (or a realtime
-  // event landing between "round finalized" and "season marked complete")
-  // could momentarily fall through to TrackPicker and let someone start a
+  // Once the season's 32nd race finalizes, stop rendering the loadout
+  // picker/track picker/cockpit entirely — otherwise a stale device (or a
+  // realtime event landing between "round finalized" and "season marked
+  // complete") could momentarily fall through and let someone start a
   // "round 33 of 32". Checking races.length directly here (rather than
   // trusting activeRound to already be null) closes that race condition.
   // "Play Again" routes through SeasonCompletionScreen's own link back to
   // /war-mode, which re-renders WarModeLanding fresh — same pattern as
   // solo mode's WarModeClient.
-  const seasonComplete = races.length >= RACES_PER_SEASON;
   if (seasonComplete) {
     return (
       <SeasonCompletionScreen
@@ -197,52 +264,96 @@ export function BattleModeClient({
   const isAdmin = season.adminPlayerId === identity.playerId;
   const adminName = season.adminPlayerId ? PLAYERS[season.adminPlayerId].name : "the admin";
 
-  // A single BattleScreen call site for both the track-picker and cockpit
-  // content (not two separate returns) — React reconciles it as the same
-  // instance across the switch, so the backdrop and leaderboard stay
-  // mounted instead of flashing/resetting. The inner ref'd div is what
-  // the anime.js slide (above) animates on each screen change; Cockpit
-  // keeps its own key={activeRound.id} so its internal state (which
-  // screen within the cockpit is showing) still resets per round.
+  // Kart Kontrol (Season 15+): a round now opens with no track picked yet
+  // (see the ensure-pending-round effect above and the `phase` derivation
+  // next to it), so there are up to four screens per round instead of two
+  // — loadout picker, waiting-on-the-other-player, track picker, then the
+  // normal cockpit — chosen by `phase`, which is already computed from
+  // the exact same state this switch needs.
+  let content: ReactNode;
+  if (phase === "opening") {
+    content = (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <Loader2 className="h-8 w-8 text-danger animate-spin" />
+      </div>
+    );
+  } else if (phase === "loadout" && identity.playerId !== "guest") {
+    content = (
+      <div className="space-y-6">
+        <LoadoutSetup
+          seasonId={season.id}
+          roundId={activeRound!.id}
+          myPlayerId={identity.playerId}
+          races={races}
+          onDone={refresh}
+        />
+        <div className="text-center pt-2">
+          <EndBattleControl seasonId={season.id} raceCount={races.length} isAdmin={isAdmin} onEnded={handleBattleEnded} />
+        </div>
+      </div>
+    );
+  } else if (phase === "loadout-waiting" || phase === "loadout") {
+    // The "|| phase === 'loadout'" case is unreachable in practice (only a
+    // named player with their own loadout still unset reaches "loadout" —
+    // see the derivation above) but keeps this switch exhaustive for the
+    // guest seat, which never has a loadout of its own to set.
+    content = (
+      <div className="space-y-6">
+        <LoadoutWaiting round={activeRound!} />
+        <div className="text-center pt-2">
+          <EndBattleControl seasonId={season.id} raceCount={races.length} isAdmin={isAdmin} onEnded={handleBattleEnded} />
+        </div>
+      </div>
+    );
+  } else if (phase === "track") {
+    content = (
+      <TrackPicker
+        seasonId={season.id}
+        raceCount={races.length}
+        circuits={circuits}
+        raceNumber={activeRound!.raceNumber}
+        isAdmin={isAdmin}
+        adminName={adminName}
+        onSelect={handlePickTrack}
+        onEnded={handleBattleEnded}
+        pending={pending}
+      />
+    );
+  } else {
+    const round = activeRound!;
+    content = (
+      <Cockpit
+        key={round.id}
+        season={season}
+        round={round}
+        circuit={circuitsById.get(round.circuitId!)}
+        myPlayerId={identity.playerId}
+        races={races}
+        historicalSeasons={historicalSeasons}
+        historicalRacesBySeasonId={historicalRacesBySeasonId}
+        circuits={circuits}
+        pointsMapping={pointsMapping}
+        isAdmin={isAdmin}
+        onChanged={refresh}
+        onEnded={handleBattleEnded}
+      />
+    );
+  }
+
+  // A single BattleScreen call site for every inner screen (not a
+  // separate return per case) — React reconciles it as the same instance
+  // across the switch, so the backdrop and leaderboard stay mounted
+  // instead of flashing/resetting. The inner ref'd div is what the
+  // anime.js slide (above) animates on each screen change.
   return (
     <BattleScreen
-      circuit={activeRound ? circuitsById.get(activeRound.circuitId) : undefined}
+      circuit={activeRound?.circuitId ? circuitsById.get(activeRound.circuitId) : undefined}
       adiPoints={adiTotal}
       renPoints={renTotal}
       guestEnabled={Boolean(season.guestEnabled)}
       guestPoints={guestTotal}
     >
-      <div ref={screenRef}>
-        {activeRound ? (
-          <Cockpit
-            key={activeRound.id}
-            season={season}
-            round={activeRound}
-            circuit={circuitsById.get(activeRound.circuitId)}
-            myPlayerId={identity.playerId}
-            races={races}
-            historicalSeasons={historicalSeasons}
-            historicalRacesBySeasonId={historicalRacesBySeasonId}
-            circuits={circuits}
-            pointsMapping={pointsMapping}
-            isAdmin={isAdmin}
-            onChanged={refresh}
-            onEnded={handleBattleEnded}
-          />
-        ) : (
-          <TrackPicker
-            seasonId={season.id}
-            raceCount={races.length}
-            circuits={circuits}
-            raceNumber={races.length + 1}
-            isAdmin={isAdmin}
-            adminName={adminName}
-            onSelect={handlePickTrack}
-            onEnded={handleBattleEnded}
-            pending={pending}
-          />
-        )}
-      </div>
+      <div ref={screenRef}>{content}</div>
     </BattleScreen>
   );
 }

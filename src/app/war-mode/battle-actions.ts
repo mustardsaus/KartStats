@@ -5,7 +5,7 @@ import { normalizeBattleCode } from "@/lib/data/battle-code";
 import { isValidFinishingPosition } from "@/lib/stats/points";
 import { getCharacterWeightClass } from "@/lib/data/characters";
 import { isVehicleAvailableToWeightClass } from "@/lib/data/karts";
-import type { DriverId, ItemId, PlayerId, TransmissionMode } from "@/lib/types";
+import type { BattleRound, DriverId, ItemId, PlayerId, TransmissionMode } from "@/lib/types";
 import { RACES_PER_SEASON } from "@/lib/types";
 import { revalidatePath } from "next/cache";
 import { completeSeasonIfFull, computeAndCompleteSeason } from "./actions";
@@ -83,22 +83,58 @@ export async function endBattleEarlyAction(seasonId: string) {
 }
 
 /**
- * The admin picking a track for the next round. Guarded against starting a
- * 33rd round: a stale admin device that hasn't yet refreshed after the
- * season's 32nd race finalized could otherwise tap "pick track" and create
- * a round the season has no room for (the "Race 33 of 32" bug) — this
- * check happens server-side, atomically ahead of the actual insert, so it
- * can't be raced the way a client-side-only check could.
+ * Opens the next round, with no track chosen yet, as soon as there's room
+ * for one and nothing's already open — called by every joined device the
+ * moment it sees no active round (see BattleModeClient), not just the
+ * admin's, since which device happens to notice first shouldn't matter.
+ * Guarded against opening a 33rd round the same way pickTrackAction used
+ * to guard the old "track first" flow (the "Race 33 of 32" bug). If two
+ * devices call this at the same moment, one wins the insert and the other
+ * just fetches and returns the round the winner created — never surfaced
+ * as an error, since from the caller's point of view the outcome ("a
+ * round is now open") is identical either way.
  */
-export async function pickTrackAction(seasonId: string, circuitId: string) {
+export async function ensurePendingRoundAction(seasonId: string): Promise<{ round: BattleRound } | { error: string }> {
   const store = getStore();
+  const existing = await store.getActiveRound(seasonId);
+  if (existing) return { round: existing };
+
   const races = (await store.getRacesBySeasonId()).get(seasonId) ?? [];
   if (races.length >= RACES_PER_SEASON) {
     return { error: "This season's already got all 32 races — start a new one to keep playing." };
   }
-  const round = await store.startRound(seasonId, circuitId);
+
+  try {
+    const round = await store.startRound(seasonId);
+    revalidatePath("/war-mode");
+    return { round };
+  } catch {
+    const round = await store.getActiveRound(seasonId);
+    if (round) return { round };
+    return { error: "Couldn't open the next round — try refreshing." };
+  }
+}
+
+/**
+ * The admin picking a track for the round already in progress. Kart
+ * Kontrol (Season 15+) moved track-picking to AFTER both players lock in
+ * their own character/kart/transmission (see ensurePendingRoundAction and
+ * setLoadoutAction below) — matching the real game's character-then-
+ * course order — so this no longer creates the round, only sets its
+ * circuit.
+ */
+export async function pickTrackAction(seasonId: string, circuitId: string) {
+  const store = getStore();
+  const round = await store.getActiveRound(seasonId);
+  if (!round) {
+    return { error: "No round is ready for a track yet — try again in a moment." };
+  }
+  if (round.circuitId) {
+    return { error: "A track's already been picked for this race." };
+  }
+  const updated = await store.setRoundCircuit(round.id, circuitId);
   revalidatePath("/war-mode");
-  return { round };
+  return { round: updated };
 }
 
 /**
@@ -147,6 +183,15 @@ export async function recordPositionAction(seasonId: string, roundId: string, pl
     // ready — either way, nothing more for this caller to do.
     revalidatePath("/war-mode");
     return { round, finalized: false };
+  }
+
+  if (!claimed.circuitId) {
+    // Shouldn't be reachable — Cockpit (where positions get recorded)
+    // only renders once a round has a circuit — but a round can't
+    // finalize into a real race with no circuit, so guard it explicitly
+    // rather than letting a null slip into addRace's required field.
+    await store.unclaimFinalizeRound(roundId);
+    return { error: "This round doesn't have a track yet." };
   }
 
   try {

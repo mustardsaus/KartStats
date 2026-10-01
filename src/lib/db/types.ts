@@ -66,11 +66,25 @@ export interface DataStore {
   /** Atomically claims admin for whichever player's device calls first; a later call from the other player is a no-op that returns the already-claimed row. */
   claimAdmin(seasonId: string, playerId: PlayerId): Promise<RawSeason>;
 
-  /** The season's current in-progress round (finalizedAt IS NULL), or null if the admin hasn't picked a track yet / the last round already finalized. */
+  /** The season's current in-progress round (finalizedAt IS NULL), or null if no round is open yet / the last round already finalized. */
   getActiveRound(seasonId: string): Promise<BattleRound | null>;
 
-  /** Starts a new round (admin picks a track). Throws if a round is already open for this season. Snapshots the season's guestEnabled onto the round (see BattleRound.guestEnabled). */
-  startRound(seasonId: string, circuitId: string): Promise<BattleRound>;
+  /**
+   * Opens the next round with no track chosen yet (circuitId null) — Kart
+   * Kontrol (Season 15+) collects each player's own loadout before the
+   * track gets picked, matching the real game's character-then-course
+   * order. Throws if a round is already open for this season. Snapshots
+   * the season's guestEnabled onto the round (see BattleRound.guestEnabled).
+   */
+  startRound(seasonId: string): Promise<BattleRound>;
+
+  /**
+   * The admin picking a track for an already-open round (see startRound
+   * above) — sets circuitId on it. Silently no-ops (returns the round
+   * unchanged) if the round is already finalized, matching
+   * recordRoundPosition's idiom.
+   */
+  setRoundCircuit(roundId: string, circuitId: string): Promise<BattleRound>;
 
   /** Atomically sets one driver's position on the round. Silently no-ops (returns the round unchanged) if the round is already finalized. */
   recordRoundPosition(roundId: string, playerId: DriverId, position: number): Promise<BattleRound>;

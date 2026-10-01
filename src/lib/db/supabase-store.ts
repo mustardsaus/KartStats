@@ -100,7 +100,7 @@ interface BattleRoundRow {
   id: string;
   season_id: string;
   race_number: number;
-  circuit_id: string;
+  circuit_id: string | null;
   adi_position: number | null;
   ren_position: number | null;
   adi_blue_shell_count: number;
@@ -459,7 +459,7 @@ export const supabaseStore: DataStore = {
     return data ? rowToBattleRound(data as BattleRoundRow) : null;
   },
 
-  async startRound(seasonId: string, circuitId: string) {
+  async startRound(seasonId: string) {
     const supabase = getSupabaseServerClient();
     const [{ count, error: countErr }, { data: seasonRow, error: seasonErr }] = await Promise.all([
       supabase.from("races").select("id", { count: "exact", head: true }).eq("season_id", seasonId),
@@ -473,9 +473,13 @@ export const supabaseStore: DataStore = {
     }
     const guestEnabled = Boolean((seasonRow as { guest_enabled: boolean | null } | null)?.guest_enabled);
 
+    // circuit_id starts null — Kart Kontrol (Season 15+) collects both
+    // players' loadouts before the track gets picked. Requires the
+    // battle_rounds.circuit_id column to be nullable; see
+    // supabase/kart-kontrol-migration.sql.
     const { data, error } = await supabase
       .from("battle_rounds")
-      .insert({ season_id: seasonId, race_number: raceNumber, circuit_id: circuitId, guest_enabled: guestEnabled })
+      .insert({ season_id: seasonId, race_number: raceNumber, circuit_id: null, guest_enabled: guestEnabled })
       .select()
       .single();
     if (error) {
@@ -485,6 +489,21 @@ export const supabaseStore: DataStore = {
       throw error;
     }
     return rowToBattleRound(data as BattleRoundRow);
+  },
+
+  async setRoundCircuit(roundId: string, circuitId: string) {
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("battle_rounds")
+      .update({ circuit_id: circuitId })
+      .eq("id", roundId)
+      .is("finalized_at", null)
+      .select()
+      .single();
+    if (!error) return rowToBattleRound(data as BattleRoundRow);
+    const { data: current, error: fetchErr } = await supabase.from("battle_rounds").select("*").eq("id", roundId).single();
+    if (fetchErr) throw fetchErr;
+    return rowToBattleRound(current as BattleRoundRow);
   },
 
   async recordRoundPosition(roundId: string, playerId: DriverId, position: number) {
