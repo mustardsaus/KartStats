@@ -1,4 +1,4 @@
-import type { BattleRound, Circuit, DriverId, ItemId, PlayerId, PointsMapping, RaceInput, RacePowerup, RawRace, RawSeason, RoundPowerup } from "@/lib/types";
+import type { BattleRound, Circuit, DriverId, ItemId, PlayerId, PointsMapping, RaceInput, RacePowerup, RawRace, RawSeason, RoundPowerup, TransmissionMode } from "@/lib/types";
 
 export interface ImportBatchResult {
   imported: boolean;
@@ -75,6 +75,18 @@ export interface DataStore {
   /** Atomically sets one driver's position on the round. Silently no-ops (returns the round unchanged) if the round is already finalized. */
   recordRoundPosition(roundId: string, playerId: DriverId, position: number): Promise<BattleRound>;
 
+  /**
+   * Kart Kontrol (Season 15+): one player independently setting their own
+   * character/kart/transmission for the round in progress — never the
+   * guest seat. Silently no-ops (returns the round unchanged) if the round
+   * is already finalized, matching recordRoundPosition's idiom.
+   */
+  setRoundLoadout(
+    roundId: string,
+    playerId: PlayerId,
+    loadout: { character: string; kart: string; transmission: TransmissionMode }
+  ): Promise<BattleRound>;
+
   /** Atomic +1 / -1 (never below 0) on one driver's blue-shell tally for the round. */
   incrementBlueShellCount(roundId: string, playerId: DriverId): Promise<BattleRound>;
   decrementBlueShellCount(roundId: string, playerId: DriverId): Promise<BattleRound>;
@@ -101,6 +113,18 @@ export interface DataStore {
   unclaimFinalizeRound(roundId: string): Promise<void>;
   completeFinalizeRound(roundId: string, raceId: string): Promise<void>;
   setRaceBlueShellCounts(raceId: string, adiCount: number, renCount: number, guestCount?: number | null): Promise<void>;
+  /** Copies the round's Kart Kontrol loadout (whatever is/isn't set) onto the newly-finalized race. */
+  setRaceLoadout(
+    raceId: string,
+    loadout: {
+      adiCharacter: string | null;
+      adiKart: string | null;
+      adiTransmission: TransmissionMode | null;
+      renCharacter: string | null;
+      renKart: string | null;
+      renTransmission: TransmissionMode | null;
+    }
+  ): Promise<void>;
   copyRoundPowerupsToRace(roundId: string, raceId: string): Promise<void>;
 
   /** Every permanent per-race item tally recorded so far — for the Tomfoolery Tales aggregate. */

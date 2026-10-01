@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Scroll, Menu, X, LineChart, MapPinned, Users, History, Swords, UploadCloud, PartyPopper } from "lucide-react";
+import { Scroll, Menu, X, LineChart, MapPinned, Users, History, Swords, UploadCloud, PartyPopper, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -12,6 +12,7 @@ const ANALYZE_LINKS = [
   { href: "/trendline", label: "Trendline", icon: LineChart },
   { href: "/circuits", label: "Circuit Stats", icon: MapPinned },
   { href: "/players", label: "Player Stats", icon: Users },
+  { href: "/kart-kontrol", label: "Kart Kontrol", icon: Gauge },
 ];
 
 const HISTORY_LINKS = [

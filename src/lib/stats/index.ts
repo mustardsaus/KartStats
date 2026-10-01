@@ -21,6 +21,7 @@ export * from "./season";
 export * from "./career";
 export * from "./circuit";
 export * from "./trendline";
+export * from "./kart-kontrol";
 export { median, average, safeDivide, round } from "./math";
 
 /**

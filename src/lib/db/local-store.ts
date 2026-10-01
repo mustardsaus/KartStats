@@ -247,6 +247,12 @@ export const localStore: DataStore = {
       guestEnabled: Boolean(season?.guestEnabled),
       guestPosition: null,
       guestBlueShellCount: 0,
+      adiCharacter: null,
+      adiKart: null,
+      adiTransmission: null,
+      renCharacter: null,
+      renKart: null,
+      renTransmission: null,
     };
     state.battleRounds.set(round.id, round);
     return round;
@@ -259,6 +265,22 @@ export const localStore: DataStore = {
     if (playerId === "adi") round.adiPosition = position;
     else if (playerId === "ren") round.renPosition = position;
     else round.guestPosition = position;
+    return round;
+  },
+
+  async setRoundLoadout(roundId, playerId, loadout) {
+    const round = state.battleRounds.get(roundId);
+    if (!round) throw new Error("Round not found");
+    if (round.finalizedAt) return round; // no-op, matches recordRoundPosition's idempotent behavior
+    if (playerId === "adi") {
+      round.adiCharacter = loadout.character;
+      round.adiKart = loadout.kart;
+      round.adiTransmission = loadout.transmission;
+    } else {
+      round.renCharacter = loadout.character;
+      round.renKart = loadout.kart;
+      round.renTransmission = loadout.transmission;
+    }
     return round;
   },
 
@@ -320,6 +342,21 @@ export const localStore: DataStore = {
         race.adiBlueShellCount = adiCount;
         race.renBlueShellCount = renCount;
         race.guestBlueShellCount = guestCount ?? null;
+        return;
+      }
+    }
+  },
+
+  async setRaceLoadout(raceId, loadout) {
+    for (const races of state.racesBySeasonId.values()) {
+      const race = races.find((r) => r.id === raceId);
+      if (race) {
+        race.adiCharacter = loadout.adiCharacter;
+        race.adiKart = loadout.adiKart;
+        race.adiTransmission = loadout.adiTransmission;
+        race.renCharacter = loadout.renCharacter;
+        race.renKart = loadout.renKart;
+        race.renTransmission = loadout.renTransmission;
         return;
       }
     }

@@ -1,4 +1,4 @@
-import type { BattleRound, Circuit, DriverId, ItemId, PlayerId, PointsMapping, RawRace, RawSeason, RaceInput, RacePowerup, RoundPowerup } from "@/lib/types";
+import type { BattleRound, Circuit, DriverId, ItemId, PlayerId, PointsMapping, RawRace, RawSeason, RaceInput, RacePowerup, RoundPowerup, TransmissionMode } from "@/lib/types";
 import { RACES_PER_SEASON } from "@/lib/types";
 import { PLAYERS } from "@/lib/data/points-mapping";
 import { generateBattleCode } from "@/lib/data/battle-code";
@@ -67,6 +67,12 @@ interface RaceRow {
   ren_blue_shell_count?: number | null;
   guest_finishing_position?: number | null;
   guest_blue_shell_count?: number | null;
+  adi_character?: string | null;
+  adi_kart?: string | null;
+  adi_transmission?: TransmissionMode | null;
+  ren_character?: string | null;
+  ren_kart?: string | null;
+  ren_transmission?: TransmissionMode | null;
 }
 function rowToRace(r: RaceRow): RawRace {
   return {
@@ -81,6 +87,12 @@ function rowToRace(r: RaceRow): RawRace {
     renBlueShellCount: r.ren_blue_shell_count ?? null,
     guestFinishingPosition: r.guest_finishing_position ?? null,
     guestBlueShellCount: r.guest_blue_shell_count ?? null,
+    adiCharacter: r.adi_character ?? null,
+    adiKart: r.adi_kart ?? null,
+    adiTransmission: r.adi_transmission ?? null,
+    renCharacter: r.ren_character ?? null,
+    renKart: r.ren_kart ?? null,
+    renTransmission: r.ren_transmission ?? null,
   };
 }
 
@@ -99,6 +111,12 @@ interface BattleRoundRow {
   guest_enabled: boolean | null;
   guest_position: number | null;
   guest_blue_shell_count: number | null;
+  adi_character: string | null;
+  adi_kart: string | null;
+  adi_transmission: TransmissionMode | null;
+  ren_character: string | null;
+  ren_kart: string | null;
+  ren_transmission: TransmissionMode | null;
 }
 function rowToBattleRound(r: BattleRoundRow): BattleRound {
   return {
@@ -116,6 +134,12 @@ function rowToBattleRound(r: BattleRoundRow): BattleRound {
     guestEnabled: Boolean(r.guest_enabled),
     guestPosition: r.guest_position,
     guestBlueShellCount: r.guest_blue_shell_count ?? 0,
+    adiCharacter: r.adi_character ?? null,
+    adiKart: r.adi_kart ?? null,
+    adiTransmission: r.adi_transmission ?? null,
+    renCharacter: r.ren_character ?? null,
+    renKart: r.ren_kart ?? null,
+    renTransmission: r.ren_transmission ?? null,
   };
 }
 
@@ -481,6 +505,26 @@ export const supabaseStore: DataStore = {
     return rowToBattleRound(current as BattleRoundRow);
   },
 
+  async setRoundLoadout(roundId: string, playerId: PlayerId, loadout: { character: string; kart: string; transmission: TransmissionMode }) {
+    const supabase = getSupabaseServerClient();
+    const columns =
+      playerId === "adi"
+        ? { adi_character: loadout.character, adi_kart: loadout.kart, adi_transmission: loadout.transmission }
+        : { ren_character: loadout.character, ren_kart: loadout.kart, ren_transmission: loadout.transmission };
+    const { data, error } = await supabase
+      .from("battle_rounds")
+      .update(columns)
+      .eq("id", roundId)
+      .is("finalized_at", null)
+      .select()
+      .single();
+    if (!error) return rowToBattleRound(data as BattleRoundRow);
+    // Round already finalized (or doesn't exist) — same idempotent fallback as recordRoundPosition.
+    const { data: current, error: fetchErr } = await supabase.from("battle_rounds").select("*").eq("id", roundId).single();
+    if (fetchErr) throw fetchErr;
+    return rowToBattleRound(current as BattleRoundRow);
+  },
+
   async incrementBlueShellCount(roundId: string, playerId: DriverId) {
     const supabase = getSupabaseServerClient();
     const { data, error } = await supabase.rpc("increment_blue_shell", { p_round_id: roundId, p_player: playerId });
@@ -560,6 +604,32 @@ export const supabaseStore: DataStore = {
     const { error } = await supabase
       .from("races")
       .update({ adi_blue_shell_count: adiCount, ren_blue_shell_count: renCount, guest_blue_shell_count: guestCount ?? null })
+      .eq("id", raceId);
+    if (error) throw error;
+  },
+
+  async setRaceLoadout(
+    raceId: string,
+    loadout: {
+      adiCharacter: string | null;
+      adiKart: string | null;
+      adiTransmission: TransmissionMode | null;
+      renCharacter: string | null;
+      renKart: string | null;
+      renTransmission: TransmissionMode | null;
+    }
+  ) {
+    const supabase = getSupabaseServerClient();
+    const { error } = await supabase
+      .from("races")
+      .update({
+        adi_character: loadout.adiCharacter,
+        adi_kart: loadout.adiKart,
+        adi_transmission: loadout.adiTransmission,
+        ren_character: loadout.renCharacter,
+        ren_kart: loadout.renKart,
+        ren_transmission: loadout.renTransmission,
+      })
       .eq("id", raceId);
     if (error) throw error;
   },

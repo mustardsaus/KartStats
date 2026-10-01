@@ -6,6 +6,12 @@
 
 export type PlayerId = "adi" | "ren";
 
+/** Mario Kart Wii's three size classes — see lib/data/characters.ts and lib/data/karts.ts. */
+export type WeightClass = "small" | "medium" | "large";
+
+/** How a player drove a given race — manual drift or automatic. */
+export type TransmissionMode = "automatic" | "manual";
+
 /**
  * Battle Mode only: the two named players plus an optional third "guest"
  * seat ("Prawns") for a 3-driver battle. Deliberately kept separate from
@@ -75,6 +81,20 @@ export interface RawRace {
    */
   guestFinishingPosition?: number | null;
   guestBlueShellCount?: number | null;
+  /**
+   * Battle Mode only, and only from Season 15 onward ("Kart Kontrol" — see
+   * lib/stats/kart-kontrol.ts). Copied from the BattleRound's own loadout
+   * fields once the round finalizes. Always null for every solo-mode race,
+   * every guest driver, and every race before Season 15 — never fabricated
+   * for older seasons, and never required by the core stats layer (points/
+   * standings/season totals never read these).
+   */
+  adiCharacter?: string | null;
+  adiKart?: string | null;
+  adiTransmission?: TransmissionMode | null;
+  renCharacter?: string | null;
+  renKart?: string | null;
+  renTransmission?: TransmissionMode | null;
 }
 
 /**
@@ -175,6 +195,19 @@ export interface BattleRound {
   guestEnabled: boolean;
   guestPosition: number | null;
   guestBlueShellCount: number;
+  /**
+   * Kart Kontrol loadout, set independently by each of Adi and Ren from
+   * their own device before their own "race concluded?" step unlocks (see
+   * Cockpit.tsx / LoadoutSetup.tsx) — never required from the guest driver.
+   * Null until that player sets it for this round; copied onto the real
+   * race at finalize time by setRaceLoadout.
+   */
+  adiCharacter: string | null;
+  adiKart: string | null;
+  adiTransmission: TransmissionMode | null;
+  renCharacter: string | null;
+  renKart: string | null;
+  renTransmission: TransmissionMode | null;
 }
 
 /** One driver's logged count of one item, for one round (live) or one finalized race (permanent). */

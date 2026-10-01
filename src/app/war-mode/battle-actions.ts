@@ -3,7 +3,9 @@
 import { getStore } from "@/lib/db";
 import { normalizeBattleCode } from "@/lib/data/battle-code";
 import { isValidFinishingPosition } from "@/lib/stats/points";
-import type { DriverId, ItemId, PlayerId } from "@/lib/types";
+import { getCharacterWeightClass } from "@/lib/data/characters";
+import { isVehicleAvailableToWeightClass } from "@/lib/data/karts";
+import type { DriverId, ItemId, PlayerId, TransmissionMode } from "@/lib/types";
 import { RACES_PER_SEASON } from "@/lib/types";
 import { revalidatePath } from "next/cache";
 import { completeSeasonIfFull, computeAndCompleteSeason } from "./actions";
@@ -160,6 +162,14 @@ export async function recordPositionAction(seasonId: string, roundId: string, pl
       claimed.renBlueShellCount,
       claimed.guestEnabled ? claimed.guestBlueShellCount : undefined
     );
+    await store.setRaceLoadout(race.id, {
+      adiCharacter: claimed.adiCharacter,
+      adiKart: claimed.adiKart,
+      adiTransmission: claimed.adiTransmission,
+      renCharacter: claimed.renCharacter,
+      renKart: claimed.renKart,
+      renTransmission: claimed.renTransmission,
+    });
     await store.copyRoundPowerupsToRace(roundId, race.id);
     await store.completeFinalizeRound(roundId, race.id);
     const completed = await completeSeasonIfFull(seasonId);
@@ -171,6 +181,38 @@ export async function recordPositionAction(seasonId: string, roundId: string, pl
     await store.unclaimFinalizeRound(roundId);
     throw e;
   }
+}
+
+/**
+ * Kart Kontrol (Season 15+): a player locking in their own character, kart,
+ * and transmission for the round in progress — Adi/Ren only, never the
+ * guest seat. Validated server-side (never trusting the client picker
+ * alone) exactly the way recordPositionAction validates a position:
+ * character must be a real roster id, and the chosen kart must actually be
+ * available to that character's weight class — the whole reason this is a
+ * two-step picker in the UI rather than one flat list.
+ */
+export async function setLoadoutAction(
+  seasonId: string,
+  roundId: string,
+  playerId: PlayerId,
+  loadout: { character: string; kart: string; transmission: TransmissionMode }
+) {
+  const weightClass = getCharacterWeightClass(loadout.character);
+  if (!weightClass) {
+    return { error: "Unrecognized character — pick one from the roster." };
+  }
+  if (!isVehicleAvailableToWeightClass(loadout.kart, weightClass)) {
+    return { error: "That kart isn't available to this character's weight class." };
+  }
+  if (loadout.transmission !== "automatic" && loadout.transmission !== "manual") {
+    return { error: "Pick Automatic or Manual." };
+  }
+
+  const store = getStore();
+  const round = await store.setRoundLoadout(roundId, playerId, loadout);
+  revalidatePath("/war-mode");
+  return { round };
 }
 
 export async function incrementBlueShellAction(roundId: string, playerId: DriverId) {

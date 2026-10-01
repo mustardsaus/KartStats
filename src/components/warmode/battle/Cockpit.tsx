@@ -8,6 +8,7 @@ import { CircuitPreviewPanel } from "@/components/warmode/CircuitPreviewPanel";
 import { BlueShellButton } from "./BlueShellButton";
 import { BattlePositionForm } from "./BattlePositionForm";
 import { EndBattleControl } from "./EndBattleControl";
+import { LoadoutSetup } from "./LoadoutSetup";
 import { ChevronRight } from "lucide-react";
 
 interface CockpitProps {
@@ -92,6 +93,27 @@ export function Cockpit({
     });
     return calculateCircuitStats(seasonStats, circuit);
   }, [circuit, historicalSeasons, historicalRacesBySeasonId, season, races, circuitsById, pointsMapping]);
+
+  // Kart Kontrol (Season 15+): this device's own player must lock in a
+  // character, kart, and transmission for THIS round before reaching either
+  // the normal cockpit or the position-entry screen — mirrors the spec's
+  // Join -> Character -> Kart -> Transmission -> Circuit -> Start ordering
+  // (track is already picked by the time Cockpit mounts, so this is the
+  // last gate before "Start"). The guest ("Prawns") seat never tracks a
+  // loadout, so this branch is unreachable for it.
+  if (myPlayerId !== "guest") {
+    const myLoadoutSet =
+      myPlayerId === "adi"
+        ? Boolean(round.adiCharacter && round.adiKart && round.adiTransmission)
+        : Boolean(round.renCharacter && round.renKart && round.renTransmission);
+    if (!myLoadoutSet) {
+      return (
+        <div ref={screenRef}>
+          <LoadoutSetup seasonId={season.id} roundId={round.id} myPlayerId={myPlayerId} races={races} onDone={onChanged} />
+        </div>
+      );
+    }
+  }
 
   return (
     <div ref={screenRef}>
