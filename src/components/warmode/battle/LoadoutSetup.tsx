@@ -8,6 +8,7 @@ import { setLoadoutAction } from "@/app/war-mode/battle-actions";
 import { CharacterPicker } from "./CharacterPicker";
 import { KartPicker } from "./KartPicker";
 import { TransmissionPicker } from "./TransmissionPicker";
+import { CharacterIcon } from "./CharacterIcon";
 import { tapPulse } from "@/lib/animation";
 import { Loader2 } from "lucide-react";
 
@@ -89,13 +90,16 @@ export function LoadoutSetup({
             tapPulse(e.currentTarget);
             submit(previous);
           }}
-          className="w-full rounded-xl border border-paper/20 bg-paper/10 px-5 py-4 text-left hover:border-danger/50 hover:bg-danger/10 transition-colors mb-3"
+          className="w-full flex items-center gap-3 rounded-xl border border-paper/20 bg-paper/10 px-5 py-4 text-left hover:border-danger/50 hover:bg-danger/10 transition-colors mb-3"
         >
-          <p className="font-hud text-[11px] font-bold tracking-[0.2em] text-paper/50 uppercase mb-1">Use previous setup</p>
-          <p className="font-display text-lg text-paper">
-            {characterName} &middot; {kartName}
-          </p>
-          <p className="text-xs text-paper/50 mt-0.5 capitalize">{previous.transmission}</p>
+          <CharacterIcon characterId={previous.character} accent={accent} size="md" />
+          <div>
+            <p className="font-hud text-[11px] font-bold tracking-[0.2em] text-paper/50 uppercase mb-1">Use previous setup</p>
+            <p className="font-display text-lg text-paper">
+              {characterName} &middot; {kartName}
+            </p>
+            <p className="text-xs text-paper/50 mt-0.5 capitalize">{previous.transmission}</p>
+          </div>
         </button>
 
         <button
@@ -136,8 +140,10 @@ export function LoadoutSetup({
     }
     return (
       <KartPicker
+        characterId={character}
         characterName={characterName}
         weightClass={weightClass}
+        accent={accent}
         onBack={() => setStep("character")}
         onSelect={(id) => {
           setKart(id);

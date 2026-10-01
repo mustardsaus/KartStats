@@ -1,41 +1,79 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence, type PanInfo } from "framer-motion";
 import type { WeightClass } from "@/lib/types";
 import { getVehiclesForWeightClass } from "@/lib/data/karts";
 import { cn } from "@/lib/utils";
-import { staggerIn, tapPulse } from "@/lib/animation";
-import { ChevronLeft } from "lucide-react";
+import { tapPulse } from "@/lib/animation";
+import { CharacterIcon } from "./CharacterIcon";
+import { ChevronLeft, ChevronRight, Bike as BikeIcon, CarFront } from "lucide-react";
+
+const SWIPE_DISTANCE = 60;
+const SWIPE_VELOCITY = 400;
 
 /**
- * Step 2: pick a kart — but only from the vehicles actually available to
- * the character picked in Step 1 (see lib/data/karts.ts). Never shows the
- * full 36-vehicle roster; this is the whole point of a two-step picker
- * instead of one flat list.
+ * Step 2: a side-swipe kart/bike selector — one vehicle on screen at a
+ * time, cycle with a swipe or the arrow buttons, confirm with "Select" —
+ * closer to a classic console character-select screen than the old
+ * search-a-flat-list picker. Still only ever shows vehicles actually
+ * available to the character picked in Step 1 (see lib/data/karts.ts).
+ *
+ * No licensed vehicle art is bundled (same reason as CharacterIcon), so
+ * the "image" is a clean placeholder: a big tinted card with a bike/kart
+ * glyph standing in for the real thing, not a broken <img>.
  */
 export function KartPicker({
+  characterId,
   characterName,
   weightClass,
+  accent,
   onSelect,
   onBack,
 }: {
+  characterId: string;
   characterName: string;
   weightClass: WeightClass;
+  accent: "adi" | "ren";
   onSelect: (kartId: string) => void;
   onBack: () => void;
 }) {
-  const [query, setQuery] = useState("");
-  const listRef = useRef<HTMLDivElement>(null);
-
+  // LoadoutSetup only ever renders KartPicker while its own step === "kart",
+  // so a character change (back to Step 1, pick a different one, forward
+  // again) unmounts and remounts this component fresh rather than handing
+  // it a new weightClass in place — plain useState(0) below is enough,
+  // no effect needed to reset it.
   const vehicles = useMemo(() => getVehiclesForWeightClass(weightClass), [weightClass]);
-  const karts = useMemo(() => vehicles.filter((v) => v.type === "kart"), [vehicles]);
-  const bikes = useMemo(() => vehicles.filter((v) => v.type === "bike"), [vehicles]);
+  const [index, setIndex] = useState(0);
+  const [direction, setDirection] = useState<1 | -1>(1);
 
-  const matches = (name: string) => !query.trim() || name.toLowerCase().includes(query.trim().toLowerCase());
+  const vehicle = vehicles[index];
 
+  const go = (delta: 1 | -1) => {
+    setDirection(delta);
+    setIndex((i) => (i + delta + vehicles.length) % vehicles.length);
+  };
+
+  // Arrow-key support for desktop testing/play — scoped to this
+  // component's lifetime only.
   useEffect(() => {
-    staggerIn(listRef.current);
-  }, [query]);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight") go(1);
+      else if (e.key === "ArrowLeft") go(-1);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vehicles.length]);
+
+  const handleDragEnd = (_: unknown, info: PanInfo) => {
+    if (info.offset.x < -SWIPE_DISTANCE || info.velocity.x < -SWIPE_VELOCITY) go(1);
+    else if (info.offset.x > SWIPE_DISTANCE || info.velocity.x > SWIPE_VELOCITY) go(-1);
+  };
+
+  if (!vehicle) return null;
+
+  const Icon = vehicle.type === "bike" ? BikeIcon : CarFront;
 
   return (
     <div className="w-full max-w-sm text-center mx-auto">
@@ -47,61 +85,76 @@ export function KartPicker({
       </button>
       <p className="font-hud text-xs font-bold tracking-[0.25em] text-danger uppercase mb-2">Step 2 of 3</p>
       <h3 className="font-display text-3xl sm:text-4xl text-paper tracking-wide mb-1 drop-shadow-lg">Pick a kart</h3>
-      <p className="text-xs text-paper/50 mb-6">
+      <p className="flex items-center justify-center gap-1.5 text-xs text-paper/50 mb-6">
+        <CharacterIcon characterId={characterId} accent={accent} />
         Available to {characterName} &middot; {weightClass} class
       </p>
 
-      <input
-        autoFocus
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search karts & bikes…"
-        className="w-full rounded-lg border border-paper/20 bg-void/50 backdrop-blur-sm px-3.5 py-2.5 text-sm text-paper placeholder:text-paper/45 focus:outline-none focus:ring-2 focus:ring-danger/50 mb-4"
-      />
+      <div className="flex items-center justify-center gap-2 sm:gap-4">
+        <button
+          onClick={(e) => {
+            tapPulse(e.currentTarget);
+            go(-1);
+          }}
+          aria-label="Previous vehicle"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-paper/20 bg-void/40 text-paper/70 hover:border-danger/50 hover:text-paper transition-colors"
+        >
+          <ChevronLeft className="h-5 w-5" />
+        </button>
 
-      <div ref={listRef} className="max-h-80 overflow-y-auto rounded-lg border border-paper/15 bg-void/40 backdrop-blur-sm">
-        <VehicleGroup label="Karts" items={karts} matches={matches} onSelect={onSelect} />
-        <VehicleGroup label="Bikes" items={bikes} matches={matches} onSelect={onSelect} />
+        <div className="relative h-56 w-48 overflow-hidden">
+          <AnimatePresence initial={false} mode="wait">
+            <motion.div
+              key={vehicle.id}
+              drag="x"
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={0.7}
+              onDragEnd={handleDragEnd}
+              initial={{ x: direction > 0 ? 70 : -70, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: direction > 0 ? -70 : 70, opacity: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className={cn(
+                "absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-2xl border cursor-grab active:cursor-grabbing",
+                accent === "adi" ? "border-adi/30 bg-gradient-to-b from-adi/20 to-void/60" : "border-ren/30 bg-gradient-to-b from-ren/20 to-void/60"
+              )}
+            >
+              <Icon className={cn("h-16 w-16", accent === "adi" ? "text-adi" : "text-ren")} strokeWidth={1.5} />
+              <div className="text-center px-3">
+                <p className="font-display text-base text-paper leading-tight">{vehicle.name}</p>
+                <p className="text-[10px] font-hud font-bold tracking-[0.2em] text-paper/45 uppercase mt-1">
+                  {vehicle.type === "bike" ? "Bike" : "Kart"}
+                </p>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        </div>
+
+        <button
+          onClick={(e) => {
+            tapPulse(e.currentTarget);
+            go(1);
+          }}
+          aria-label="Next vehicle"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-paper/20 bg-void/40 text-paper/70 hover:border-danger/50 hover:text-paper transition-colors"
+        >
+          <ChevronRight className="h-5 w-5" />
+        </button>
       </div>
-    </div>
-  );
-}
 
-function VehicleGroup({
-  label,
-  items,
-  matches,
-  onSelect,
-}: {
-  label: string;
-  items: { id: string; name: string }[];
-  matches: (name: string) => boolean;
-  onSelect: (id: string) => void;
-}) {
-  const visible = items.filter((v) => matches(v.name));
-  if (visible.length === 0) return null;
-  return (
-    <div>
-      <p className="sticky top-0 bg-void/80 backdrop-blur-sm px-4 py-1.5 text-left font-hud text-[11px] font-bold tracking-[0.2em] text-paper/50 uppercase">
-        {label}
+      <p className="text-xs text-paper/40 mt-4 mb-6 tabular-nums">
+        {index + 1} / {vehicles.length}
       </p>
-      <div className="divide-y divide-paper/10">
-        {visible.map((v) => (
-          <button
-            key={v.id}
-            data-stagger-item
-            onClick={(e) => {
-              tapPulse(e.currentTarget);
-              onSelect(v.id);
-            }}
-            className={cn(
-              "block w-full px-4 py-2.5 text-left text-sm text-paper/90 hover:bg-void/15 hover:text-paper transition-colors"
-            )}
-          >
-            {v.name}
-          </button>
-        ))}
-      </div>
+
+      <button
+        onClick={(e) => {
+          tapPulse(e.currentTarget);
+          onSelect(vehicle.id);
+        }}
+        className="w-full rounded-xl bg-danger py-3.5 font-hud text-sm font-bold tracking-wide text-bg hover:bg-danger/90 transition-colors"
+      >
+        Select {vehicle.name}
+      </button>
     </div>
   );
 }

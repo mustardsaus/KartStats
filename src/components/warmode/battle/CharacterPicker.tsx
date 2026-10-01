@@ -2,17 +2,23 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CHARACTERS } from "@/lib/data/characters";
-import { cn } from "@/lib/utils";
 import { staggerIn, tapPulse } from "@/lib/animation";
+import { CharacterIcon } from "./CharacterIcon";
 import { Search } from "lucide-react";
 
 /**
  * Step 1 of the per-round Kart Kontrol loadout: pick a character. No real
  * artwork is bundled for the roster (licensing — see the module comment in
- * lib/data/characters.ts), so each entry gets a plain initial-letter badge
- * instead of a broken image, same spirit as CircuitPicker's plain-name
- * list. Grouped by weight class since that's the whole reason Step 2 (the
- * kart picker) narrows the way it does.
+ * lib/data/characters.ts), so each entry gets a small CharacterIcon
+ * placeholder instead of a broken image, same spirit as CircuitPicker's
+ * plain-name list. Grouped by weight class since that's the whole reason
+ * Step 2 (the kart picker) narrows the way it does.
+ *
+ * The sticky weight-class label needs a fully OPAQUE background, not the
+ * translucent/blurred one the scroll container itself uses — a
+ * translucent sticky header lets the rows scrolling underneath bleed
+ * through it, which reads as broken rather than "frosted." z-10 keeps it
+ * stacked above every row regardless of the per-row stagger-in animation.
  */
 const GROUP_LABEL: Record<string, string> = { small: "Small", medium: "Medium", large: "Large" };
 const GROUP_ORDER = ["small", "medium", "large"];
@@ -59,7 +65,7 @@ export function CharacterPicker({
       <div ref={listRef} className="max-h-80 overflow-y-auto rounded-lg border border-paper/15 bg-void/40 backdrop-blur-sm">
         {grouped.map((g) => (
           <div key={g.weightClass}>
-            <p className="sticky top-0 bg-void/80 backdrop-blur-sm px-4 py-1.5 text-left font-hud text-[11px] font-bold tracking-[0.2em] text-paper/50 uppercase">
+            <p className="sticky top-0 z-10 bg-void px-4 py-1.5 text-left font-hud text-[11px] font-bold tracking-[0.2em] text-paper/50 uppercase">
               {GROUP_LABEL[g.weightClass]}
             </p>
             <div className="divide-y divide-paper/10">
@@ -73,14 +79,7 @@ export function CharacterPicker({
                   }}
                   className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-paper/90 hover:bg-void/15 hover:text-paper transition-colors"
                 >
-                  <span
-                    className={cn(
-                      "flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-hud text-xs font-bold",
-                      accent === "adi" ? "bg-adi/25 text-adi" : "bg-ren/25 text-ren"
-                    )}
-                  >
-                    {c.name.charAt(0)}
-                  </span>
+                  <CharacterIcon characterId={c.id} accent={accent} />
                   {c.name}
                 </button>
               ))}
