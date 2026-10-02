@@ -94,8 +94,7 @@ POSITION_MIN, POSITION_MAX = 1, 12   # 1st..12th (max racers in a MKW race)
 MAXLAP_MIN, MAXLAP_MAX = 3, 3
 
 POLL_INTERVAL_S = 0.3
-STALE_READS_TO_GIVE_UP = 4  # ~1.2s of bad reads = struct's gone
-FROZEN_POLLS_TO_FINISH = 15  # ~4.5s of a completely unchanged reading on the last lap
+STALE_READS_TO_GIVE_UP = 8  # ~2.4s of bad reads = struct's gone (not just a one-frame hiccup)
 RELOCK_TIMEOUT_S = 8.0  # how long to wait on a previously-seen address before falling back to a full rescan
 
 # players[] array detection: how many evenly-spaced plausible structs in a
@@ -271,19 +270,26 @@ def track_until_race_ends(addr: int, race_num: int):
     ((pos, lap, maxlap), reason) using the last valid reading, or
     (None, "hook_lost") if Dolphin itself went away.
 
-    Three ways a race is considered over:
+    Only two ways a race is considered over:
       - "finished": currentLap ticks past maxLap -- the tell for actually
         crossing the finish line, per raceinfo.h.
       - "struct_gone": reads stop looking valid at all (torn down between
         races).
-      - "frozen_on_last_lap": the reading stops changing at all, for a few
-        seconds, while already on the last lap -- covers games/tracks where
-        the results/podium screen keeps the struct alive with frozen final
-        values instead of tearing it down or ticking the lap counter over.
+
+    An earlier version also declared the race over after a few seconds of
+    a completely unchanged reading ("frozen on the last lap"), meant to
+    cover games/tracks that keep the struct alive with frozen final values
+    instead of tearing it down. Live testing showed that was actively
+    harmful: position only changes when someone gets overtaken, so holding
+    6th (say) for several uneventful seconds near the end of a lap is
+    normal racing, not evidence the race ended -- and it chopped single
+    real races into several fake ones. No fixed timeout can tell those
+    apart (a dominant leader can hold position for an entire last lap), so
+    it's gone; "finished" and "struct_gone" are the only signals that have
+    actually proven correct.
     """
     last_valid = None
     stale_reads = 0
-    frozen_streak = 0
 
     first = read_one(addr)
     if first is not None:
@@ -310,18 +316,12 @@ def track_until_race_ends(addr: int, race_num: int):
             if cur[1] > cur[2]:  # currentLap > maxLap: crossed the finish line
                 return cur, "finished"
 
-            if last_valid is not None and cur == last_valid:
-                frozen_streak += 1
-                if cur[1] >= cur[2] and frozen_streak >= FROZEN_POLLS_TO_FINISH:
-                    return cur, "frozen_on_last_lap"
-            else:
-                frozen_streak = 0
-                if last_valid is not None and (cur[0] != last_valid[0] or cur[1] != last_valid[1]):
-                    print(
-                        f"[race {race_num}] position: {cur[0]}  (lap {cur[1]}/{cur[2]})",
-                        flush=True,
-                    )
-                last_valid = cur
+            if last_valid is not None and (cur[0] != last_valid[0] or cur[1] != last_valid[1]):
+                print(
+                    f"[race {race_num}] position: {cur[0]}  (lap {cur[1]}/{cur[2]})",
+                    flush=True,
+                )
+            last_valid = cur
         else:
             stale_reads += 1
 
