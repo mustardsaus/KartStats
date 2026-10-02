@@ -354,7 +354,7 @@ def _raceinfo_snapshot(addr: int):
     if player is None:
         return None
     pos, lap, maxlap, flags = player
-    return players_ptr, player0_ptr, maxlap, pos
+    return players_ptr, player0_ptr, maxlap, pos, flags
 
 
 def verify_raceinfo_candidate(addr: int) -> bool:
@@ -385,12 +385,25 @@ def verify_raceinfo_candidate(addr: int) -> bool:
        singleton and should read identically a fraction of a second later.
        Re-checking catches that kind of transient collision that a single
        read can't distinguish from the real thing.
+
+    3. stateFlags must be small. Every legitimate reading seen in live
+       testing so far has been 0x0 (before the race starts) or 0x1
+       (STATE_IN_RACE, while actually racing) -- the documented bits
+       (STATE_IN_RACE/END_RACE_CAMERA/WRONG_WAY/DC/FINISHING/COMING_LAST_ANIM)
+       all fit in the low byte, so even several combined couldn't exceed
+       0x77. A false positive still got through the checks above with
+       flags=0x4D0000 -- nowhere near that range, and stuck permanently at
+       stage=0 instead of ever becoming a real race (not actually
+       Raceinfo, just something else shaped closely enough by coincidence
+       to pass the pointer/maxLap/stability checks). Rejecting anything
+       with high bits set catches this specific kind of false positive
+       before it ever gets a chance to hang the discovery loop.
     """
     snap1 = _raceinfo_snapshot(addr)
     if snap1 is None:
         return False
-    players_ptr1, player0_ptr1, maxlap1, pos1 = snap1
-    if maxlap1 != 3 or pos1 > 12:
+    players_ptr1, player0_ptr1, maxlap1, pos1, flags1 = snap1
+    if maxlap1 != 3 or pos1 > 12 or flags1 > 0xFF:
         return False
 
     time.sleep(0.4)
@@ -398,14 +411,14 @@ def verify_raceinfo_candidate(addr: int) -> bool:
     snap2 = _raceinfo_snapshot(addr)
     if snap2 is None:
         return False
-    players_ptr2, player0_ptr2, maxlap2, pos2 = snap2
+    players_ptr2, player0_ptr2, maxlap2, pos2, flags2 = snap2
 
     # The pointers and maxLap are structural -- they should be IDENTICAL a
     # moment later for a real, stable singleton. Position is allowed to
     # change (the race is live), but must still look sane.
     if players_ptr1 != players_ptr2 or player0_ptr1 != player0_ptr2:
         return False
-    if maxlap2 != 3 or pos2 > 12:
+    if maxlap2 != 3 or pos2 > 12 or flags2 > 0xFF:
         return False
     return True
 
@@ -729,7 +742,16 @@ def main() -> None:
             # way, whichever one is real gets confirmed as soon as the race
             # itself starts, regardless of how many look-alikes are ahead
             # of it in the list.
-            found_addr, found_player_addr = wait_for_any_race_start(candidates, timeout_s=9e9)
+            #
+            # Bounded, not infinite: live testing caught a false positive
+            # (plausible pointers/maxLap, but a wild stateFlags value) that
+            # got stuck at stage=0 forever with nothing else to fall back
+            # on. A full rescan is cheap (scans have measured well under 1s
+            # each), and safe to retry even if the current candidate really
+            # is Raceinfo just waiting at a menu -- a fresh scan will find
+            # the same address again in the same state, so nothing is lost,
+            # it just also gives a stuck dud a chance to be replaced.
+            found_addr, found_player_addr = wait_for_any_race_start(candidates, timeout_s=20.0)
             if not dme.is_hooked():
                 return
             if found_player_addr is None:
