@@ -460,13 +460,22 @@ def main() -> None:
 
     raceinfo_addr = None
     race_num = 0
+    next_search_log = 0.0
     while True:
         if not dme.is_hooked():
             print("Lost hook to Dolphin. Exiting.")
             return
 
         if raceinfo_addr is None:
-            print("Looking for Raceinfo (one-time; this address stays valid all session)...", flush=True)
+            # Rescanning every RESCAN_INTERVAL_S (0.5s) so lock-on happens as
+            # soon as a race's settings load -- including if you start this
+            # before you've even picked a race, straight from the menus.
+            # Logging that search itself only every 5s, not every retry, so
+            # sitting in menus for a few minutes doesn't flood the terminal
+            # with hundreds of identical "looking" lines.
+            if time.time() >= next_search_log:
+                print("Looking for Raceinfo (one-time; this address stays valid all session)...", flush=True)
+                next_search_log = time.time() + 5.0
             candidates = find_raceinfo_candidates()
             if not candidates:
                 time.sleep(RESCAN_INTERVAL_S)
