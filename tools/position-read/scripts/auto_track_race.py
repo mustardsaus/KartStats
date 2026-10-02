@@ -230,7 +230,18 @@ def find_player_array():
     if len(best_run) < PLAYER_ARRAY_MIN_RUN:
         return None
     idx = PLAYER_SLOT_INDEX if PLAYER_SLOT_INDEX < len(best_run) else 0
-    return best_run[idx]
+    addr = best_run[idx]
+
+    # One more check before trusting this: if the chosen slot already reads
+    # as "finished" (lap > maxLap) the instant we find it, that's not a race
+    # in progress -- it's the previous race's result still sitting there,
+    # not yet reset because a new race hasn't actually started. Locking onto
+    # that reports a stale leftover as a brand new "race" with nothing having
+    # been played. Only trust a fresh find that still looks live.
+    cur = read_one(addr)
+    if cur is None or cur[1] > cur[2]:
+        return None
+    return addr
 
 
 def wait_for_fresh_race_at(addr: int, timeout_s: float = RELOCK_TIMEOUT_S):
