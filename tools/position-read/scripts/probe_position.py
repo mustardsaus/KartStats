@@ -8,8 +8,9 @@ process is allowed to attach to its memory) before this will do
 anything but fail to hook.
 
 Struct source: https://github.com/SeekyCt/mkw-structures (raceinfo.h,
-racedata.h). Addresses below are PAL; see the README for what to check
-if you're on a different region.
+racedata.h). The default address is PAL and unverified for other
+regions — pass --raceinfo-address once you've confirmed yours. See the
+README and the comment above RACEINFO_SINSTANCE_DEFAULT below.
 """
 
 import argparse
@@ -26,14 +27,30 @@ except ImportError:
     )
     sys.exit(1)
 
-# --- Region-specific addresses -------------------------------------------
-# PAL, per https://github.com/SeekyCt/mkw-structures. If your game isn't
-# PAL (check Dolphin's game properties for the Game ID: RMCP01 = PAL,
-# RMCE01 = NTSC-U, RMCJ01 = NTSC-J), these two addresses are wrong and
-# need the equivalent for your region — the offsets below them are not,
-# those come from the struct layout itself, not the game's build.
-RACEINFO_SINSTANCE = 0x809BD730
-RACEDATA_SINSTANCE = 0x809BD728
+# --- Region-specific address ----------------------------------------------
+# This default is PAL, per https://github.com/SeekyCt/mkw-structures — the
+# only region with a publicly documented Raceinfo::sInstance address as of
+# writing. If your game is NTSC-U/RMCE01 (confirmed region for this repo's
+# owner) or NTSC-J, this default is WRONG for you; don't trust a read until
+# you've confirmed it some other way. Two options, cheapest first:
+#   1. Just run this script as-is and look at the verbose pointer-hop
+#      output below. If the region is wrong you'll typically see 0x00000000
+#      or an address way outside the 0x80000000-0x81800000 MEM1/MEM2 range
+#      — that's your answer, it's wrong, move to option 2.
+#   2. Find your real address with the Dolphin Memory Engine GUI app (not
+#      just this Python library) — https://github.com/aldelaro5/dolphin-memory-engine/releases
+#      — using its Cheat Engine-style scanner: start a race, note your
+#      position (1st), search type "Exact Value" for 1 as a byte; change
+#      position by letting an opponent/CPU pass you; search "Exact Value"
+#      for 2; repeat once or twice more until one result remains. That
+#      address is PLAYER_OFF_POSITION added to your actual player struct
+#      address for this session — not directly Raceinfo::sInstance, but
+#      enough to confirm position is readable at all, and from there you
+#      can scan for what points to it to find the stable sInstance address.
+# Once you have a confirmed address for your region, pass it with
+# --raceinfo-address instead of editing this constant, so this default
+# can stay documented as "PAL, unverified for other regions."
+RACEINFO_SINSTANCE_DEFAULT = 0x809BD730
 
 # --- Struct offsets, from raceinfo.h --------------------------------------
 # class Raceinfo (fields up to the ones we need):
@@ -77,11 +94,11 @@ def hook_with_retry(timeout_s: float = 30.0) -> None:
     sys.exit(1)
 
 
-def read_player_struct_addr(player_index: int, verbose: bool) -> int:
+def read_player_struct_addr(raceinfo_sinstance: int, player_index: int, verbose: bool) -> int:
     """Walks Raceinfo::sInstance -> players[player_index], printing each
     hop so a wrong region/address shows up as obvious garbage rather than
     a silently-wrong number."""
-    raceinfo_ptr = read_ptr(RACEINFO_SINSTANCE)
+    raceinfo_ptr = read_ptr(raceinfo_sinstance)
     if verbose:
         print(f"  Raceinfo::sInstance -> 0x{raceinfo_ptr:08X}")
     if raceinfo_ptr == 0:
@@ -114,12 +131,24 @@ def main() -> None:
         default=1.0,
         help="Seconds between polls. Default: 1.0.",
     )
+    parser.add_argument(
+        "--raceinfo-address",
+        type=lambda s: int(s, 16),
+        default=RACEINFO_SINSTANCE_DEFAULT,
+        metavar="0xHEX",
+        help=(
+            "Raceinfo::sInstance address for your region, as hex (e.g. 0x809bd730). "
+            "Defaults to the PAL address, which is unverified for other regions — see "
+            "the comment above RACEINFO_SINSTANCE_DEFAULT if you need to find yours."
+        ),
+    )
     args = parser.parse_args()
 
     hook_with_retry()
 
-    print("\nResolving pointer chain once, verbosely, before polling:")
-    player_addr = read_player_struct_addr(args.player_index, verbose=True)
+    print(f"\nUsing Raceinfo::sInstance = 0x{args.raceinfo_address:08X}")
+    print("Resolving pointer chain once, verbosely, before polling:")
+    player_addr = read_player_struct_addr(args.raceinfo_address, args.player_index, verbose=True)
     if player_addr == 0:
         print(
             "Player pointer read as null. Make sure a race is actually in progress "
@@ -138,7 +167,7 @@ def main() -> None:
             # Re-walk the chain each poll rather than caching player_addr —
             # Racedata/Raceinfo get torn down and rebuilt between races, so
             # a cached pointer from a previous race would go stale.
-            player_addr = read_player_struct_addr(args.player_index, verbose=False)
+            player_addr = read_player_struct_addr(args.raceinfo_address, args.player_index, verbose=False)
             if player_addr == 0:
                 print("(no active race)")
                 time.sleep(args.interval)

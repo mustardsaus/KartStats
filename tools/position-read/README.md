@@ -64,14 +64,29 @@ directly by you.
 
 ## Step 1 — confirm your game's region
 
-The addresses below (`RACEINFO_SINSTANCE`, `RACEDATA_SINSTANCE`) are the
-**PAL** addresses documented by mkw-structures. If your disc/ISO is
-NTSC-U (US) or NTSC-J (Japan), these specific numbers will be wrong —
-the struct *layout* (the `+0x20` offset for `position`, etc.) stays the
-same across regions, only the static pointer addresses shift. Check your
-copy's region before trusting any read (Dolphin's game properties panel
-shows the Game ID — `RMCP01` is PAL, `RMCE01` is NTSC-U, `RMCJ01` is
-NTSC-J) and swap in the right address if you're not on PAL.
+The script's default address is the **PAL** `Raceinfo::sInstance`
+documented by mkw-structures — the only region with a publicly
+documented value as of writing. Known region in this repo: **NTSC-U
+(`RMCE01`)**, confirmed from Dolphin's game list. The PAL default is
+**not** verified correct for NTSC-U — the struct *layout* (the `+0x20`
+offset for `position`, etc.) is the same across regions, only the
+static `sInstance` address shifts, and the per-region address maps
+checked while building this didn't happen to cover that specific
+symbol for NTSC-U.
+
+Two ways to get the real address, cheapest first:
+
+1. Just run Step 2 below as-is and read the verbose pointer-hop output.
+   If it's wrong you'll see `0x00000000` or something way outside the
+   `0x80000000`–`0x81800000` range — that tells you definitively the
+   default doesn't work for NTSC-U, no guessing required.
+2. If so, use the [Dolphin Memory Engine](https://github.com/aldelaro5/dolphin-memory-engine/releases)
+   GUI app (a separate download from the Python library above) and its
+   Cheat Engine-style scanner: start a race, your position is 1st —
+   search "Exact Value", type Byte, value `1`. Let an opponent pass you
+   (position becomes 2) — search again for `2`. Repeat once or twice
+   more until one address remains. Pass it to the script once found —
+   see `--raceinfo-address` below.
 
 ## Step 2 — run the probe
 
@@ -80,6 +95,12 @@ the menu):
 
 ```
 python scripts/probe_position.py
+```
+
+If you've confirmed a different address for your region (see Step 1):
+
+```
+python scripts/probe_position.py --raceinfo-address 0xYOURADDRESS
 ```
 
 It hooks into Dolphin, prints the raw pointer value at each hop (so a
