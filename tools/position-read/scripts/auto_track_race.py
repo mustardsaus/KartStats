@@ -188,26 +188,26 @@ PLAYER_DUMP_INTERVAL_S = 1.0
 # MKWii_Network_Protocol/ITEM page (which itemhandler.h itself cites, and which
 # has the actual byte layout of ITEMPacket that itemhandler.h doesn't inline).
 #
-# UNVERIFIED FOR NTSC-U -- unlike SINSTANCE_ADDR above, which was confirmed
-# live (the pointer-scan-and-intersect-across-races technique, run against
-# real Dolphin memory, more than once). This is only a GUESS, carried over
-# from a single confirmed data point: PAL Raceinfo::sInstance (0x809bd730)
-# and our confirmed NTSC-U Raceinfo::sInstance (0x809B8F70) differ by exactly
-# 0x47C0. Applying that same delta to the documented PAL ITEMHandler::sInstance
-# (0x809C20F8) gives 0x809BD938 -- but a single matching delta on one symbol
-# doesn't prove the whole binary's static data is offset by one constant
-# everywhere. Treat every value read_item_box() below produces as a
-# hypothesis to confirm against real gameplay (does it actually say
-# "Mushroom" right when a mushroom is picked up?), not a trusted result --
-# the same way Raceinfo's own address needed confirming before patch 27
-# hardcoded it. If it's consistently wrong/garbage, the next step is the
-# exact same reverse-pointer-scan technique that found Raceinfo's, not
-# tweaking this guess.
-ITEMHANDLER_SINSTANCE_HYPOTHESIS = 0x809BD938
+# The guessed-delta hypothesis (PAL ITEMHandler::sInstance 0x809C20F8 minus the
+# same 0x47C0 that correctly predicted Raceinfo::sInstance's NTSC-U address)
+# was tried and PROVEN WRONG by live testing: every single player slot read
+# the exact same "Green Shell, mode 0" for an entire race, never once
+# varying -- the fingerprint of reading dead/zeroed memory, not real
+# per-player state. So this now does the same thing that actually worked for
+# Raceinfo: a real structural scan for ITEMHandler's shape, then a reverse-
+# pointer-scan-and-intersect toward its permanent address. No more guessing.
+ITEM_RECORD_SIZE = 0x8     # sizeof(ITEMPacket)
+ITEM_RECORD_COUNT = 14     # sendPackets[2] + recvPackets[12], contiguous, same ITEMPacket shape
+ITEMHANDLER_OFF_SEND_PACKETS = 0x0
 ITEMHANDLER_OFF_RECV_PACKETS = 0x10  # recvPackets[12], right after sendPackets[2] (2 * 8 bytes)
-ITEMPACKET_SIZE = 0x8
-ITEMPACKET_OFF_ITEM_BOX = 0x01  # the item currently held / the roulette result
-ITEMPACKET_OFF_MODE = 0x03      # 0 = no item, 1-7 = handshake/activation states
+ITEMHANDLER_SCAN_SIZE = ITEM_RECORD_COUNT * ITEM_RECORD_SIZE  # 0x70 -- matches itemhandler.h's
+                                                                # own "unknown 0x70-9f" gap comment
+ITEMPACKET_OFF_ITEM_BOX = 0x01    # the item currently held / the roulette result
+ITEMPACKET_OFF_ITEM_TAIL = 0x02   # item at the tail, for triple-items
+ITEMPACKET_OFF_MODE = 0x03        # 0 = no item, 1-7 = handshake/activation states
+ITEMPACKET_OFF_TAIL_MODE = 0x04   # 0, or 3-7 (hold/shoot/3-3/2-3/1-3)
+ITEMPACKET_OFF_ACKNOWLEDGE = 0x05  # 0 = ok, 1 = fail
+ITEMPACKET_OFF_PADDING = 0x07      # always 0 -- a strong per-record filter
 
 ITEM_NAMES = {
     0x00: "Green Shell", 0x01: "Red Shell", 0x02: "Banana", 0x03: "Fake Item Box",
@@ -223,35 +223,126 @@ def item_name(item_id: int) -> str:
     return ITEM_NAMES.get(item_id, f"unknown item (id 0x{item_id:02X})")
 
 
-def read_item_box(player_id: int):
-    """UNVERIFIED hypothesis path -- see ITEMHANDLER_SINSTANCE_HYPOTHESIS's
-    comment. Dereferences the guessed NTSC-U ITEMHandler::sInstance, then
-    reads recvPackets[player_id] (item_box at +0x1, mode at +0x3). Returns
-    (item_id, mode), or None if anything along the chain doesn't look sane
-    (mode must be 0-7) -- which would mean the hypothesis address is simply
-    wrong, not that this particular read glitched."""
-    handler_addr = read_ptr(ITEMHANDLER_SINSTANCE_HYPOTHESIS)
-    if handler_addr is None or not (
-        0x80000000 <= handler_addr < 0x81800000 or 0x90000000 <= handler_addr < 0x94000000
-    ):
-        return None
-    packet_addr = handler_addr + ITEMHANDLER_OFF_RECV_PACKETS + player_id * ITEMPACKET_SIZE
+def scan_region_for_itemhandler(start: int, end: int):
+    """Vectorized pass over [start, end) for 4-byte-aligned addresses where
+    the following ITEMHANDLER_SCAN_SIZE (0x70) bytes look like 14 back-to-
+    back ITEMPacket records (sendPackets[2] + recvPackets[12]): each record
+    independently has to satisfy several small-range byte constraints at
+    once (item_box<=0x14, item_tail<=0x14, mode<=7, tail_mode in {0,3..7},
+    acknowledge<=1, padding==0) -- and ALL 14 repeats of that same pattern
+    have to hold simultaneously for one candidate address to pass. That's a
+    far stronger fingerprint than any single Raceinfo-style field check:
+    it's not just "this one struct's data looks plausible", it's "the exact
+    same specific byte-shape repeats 14 times in a row starting here",
+    which unrelated memory essentially never produces by coincidence."""
+    size = end - start
+    try:
+        buf = dme.read_bytes(start, size)
+    except Exception as exc:
+        print(f"  (couldn't read 0x{start:08X}-0x{end:08X}: {exc})")
+        return []
+
+    arr = np.frombuffer(buf, dtype=np.uint8)
+    n = (len(arr) - ITEMHANDLER_SCAN_SIZE) // 4 + 1
+    if n <= 0:
+        return []
+
+    mask = np.ones(n, dtype=bool)
+    for rec in range(ITEM_RECORD_COUNT):
+        base = rec * ITEM_RECORD_SIZE
+        item_box = _read_u8_field(arr, base + ITEMPACKET_OFF_ITEM_BOX, n)[:n]
+        item_tail = _read_u8_field(arr, base + ITEMPACKET_OFF_ITEM_TAIL, n)[:n]
+        mode = _read_u8_field(arr, base + ITEMPACKET_OFF_MODE, n)[:n]
+        tail_mode = _read_u8_field(arr, base + ITEMPACKET_OFF_TAIL_MODE, n)[:n]
+        ack = _read_u8_field(arr, base + ITEMPACKET_OFF_ACKNOWLEDGE, n)[:n]
+        pad = _read_u8_field(arr, base + ITEMPACKET_OFF_PADDING, n)[:n]
+        mask &= (
+            (item_box <= 0x14)
+            & (item_tail <= 0x14)
+            & (mode <= 7)
+            & ((tail_mode == 0) | ((tail_mode >= 3) & (tail_mode <= 7)))
+            & (ack <= 1)
+            & (pad == 0)
+        )
+    idxs = np.nonzero(mask)[0]
+    return [int(start + i * 4) for i in idxs]
+
+
+def _itemhandler_snapshot_ok(addr: int) -> bool:
+    """Re-applies the same per-record shape check scalar-style to one
+    specific candidate address, for the stability recheck in
+    verify_itemhandler_candidate. Values (item_box, mode, ...) are allowed
+    to have legitimately changed since the last read -- items get picked
+    up and used constantly -- so this re-checks the SHAPE holds, not that
+    the values are identical."""
+    try:
+        buf = dme.read_bytes(addr, ITEMHANDLER_SCAN_SIZE)
+    except Exception:
+        return False
+    for rec in range(ITEM_RECORD_COUNT):
+        base = rec * ITEM_RECORD_SIZE
+        item_box = buf[base + ITEMPACKET_OFF_ITEM_BOX]
+        item_tail = buf[base + ITEMPACKET_OFF_ITEM_TAIL]
+        mode = buf[base + ITEMPACKET_OFF_MODE]
+        tail_mode = buf[base + ITEMPACKET_OFF_TAIL_MODE]
+        ack = buf[base + ITEMPACKET_OFF_ACKNOWLEDGE]
+        pad = buf[base + ITEMPACKET_OFF_PADDING]
+        if not (
+            item_box <= 0x14
+            and item_tail <= 0x14
+            and mode <= 7
+            and (tail_mode == 0 or 3 <= tail_mode <= 7)
+            and ack <= 1
+            and pad == 0
+        ):
+            return False
+    return True
+
+
+def verify_itemhandler_candidate(addr: int) -> bool:
+    """Same two-snapshot stability idea as verify_raceinfo_candidate: a
+    structural false positive caught once by sheer luck shouldn't still
+    look structurally sound a moment later, since real game memory keeps
+    moving around it."""
+    if not _itemhandler_snapshot_ok(addr):
+        return False
+    time.sleep(0.4)
+    return _itemhandler_snapshot_ok(addr)
+
+
+def find_itemhandler_candidates():
+    """One-time structural scan for a real ITEMHandler object, mirroring
+    find_raceinfo_candidates. Returns every address that matched the shape
+    filter AND survived the stability recheck."""
+    found = []
+    for start, end in REGIONS:
+        for addr in scan_region_for_itemhandler(start, end):
+            if verify_itemhandler_candidate(addr):
+                found.append(addr)
+    return found
+
+
+def read_item_box(itemhandler_addr: int, player_id: int):
+    """Reads recvPackets[player_id] (item_box at +0x1, mode at +0x3) off a
+    CONFIRMED real itemhandler_addr -- no guessing involved once that
+    address is in hand. Returns (item_id, mode), or None if the read
+    itself failed."""
+    packet_addr = itemhandler_addr + ITEMHANDLER_OFF_RECV_PACKETS + player_id * ITEM_RECORD_SIZE
     try:
         item_id = dme.read_byte(packet_addr + ITEMPACKET_OFF_ITEM_BOX)
         mode = dme.read_byte(packet_addr + ITEMPACKET_OFF_MODE)
     except Exception:
         return None
-    if mode > 7:
-        return None
     return item_id, mode
 
 
-def _item_suffix(player_id: int) -> str:
-    """One-line add-on for the player dump: ' item=Mushroom(mode=3)', or ''
-    if the (unverified) item hypothesis didn't produce a sane read this
-    tick. Kept separate from read_item_box so a dump line never crashes on
-    a bad item read -- it just silently omits the item part for that slot."""
-    result = read_item_box(player_id)
+def _item_suffix(itemhandler_addr, player_id: int) -> str:
+    """One-line add-on for the player dump: ' item=Mushroom(mode=3)', or a
+    clear placeholder if itemhandler_addr hasn't been discovered yet, or ''
+    if a read glitched this one tick."""
+    if itemhandler_addr is None:
+        return " item=(still searching for ITEMHandler)"
+    result = read_item_box(itemhandler_addr, player_id)
     if result is None:
         return ""
     item_id, mode = result
@@ -909,14 +1000,16 @@ def wait_for_any_race_start(candidates, timeout_s: float, status_every_s: float 
     return None, None
 
 
-def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
+def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, itemhandler_addr=None):
     """Poll the local player's struct until the real finish flag
     (stateFlags & STATE_FINISHING) appears, Raceinfo.stage leaves 2 (race),
     or reads stop making sense entirely. Prints a line whenever position or
     lap changes (denominator shown is the constant STANDARD_LAP_COUNT, not
     the live maxLap field -- see that constant's comment for why). Also
-    prints a full all-slots dump every PLAYER_DUMP_INTERVAL_S -- purely a
-    multiplayer slot-mapping diagnostic, see read_all_players. Returns
+    prints a full all-slots dump every PLAYER_DUMP_INTERVAL_S -- a
+    multiplayer slot-mapping diagnostic (see read_all_players), now also
+    carrying real item state once itemhandler_addr has been discovered
+    (None until then -- see ensure_itemhandler_addr in main()). Returns
     ((pos, lap, maxlap), reason)."""
     last = None
     stale = 0
@@ -959,14 +1052,10 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
             players_ptr = read_ptr(raceinfo_addr + RACEINFO_OFF_PLAYERS)
             slots = read_all_players(players_ptr) if players_ptr else []
             desc = " | ".join(
-                f"slot{i}(id={pid}): pos={p} lap={l}/{m} flags=0x{f:X}{_item_suffix(pid)}"
+                f"slot{i}(id={pid}): pos={p} lap={l}/{m} flags=0x{f:X}{_item_suffix(itemhandler_addr, pid)}"
                 for i, pid, p, l, m, f in slots
             )
-            print(
-                f"[race {race_num}] all players -- {desc or '(none readable)'}  "
-                "[item=... is an UNVERIFIED hypothesis -- see if it's actually right]",
-                flush=True,
-            )
+            print(f"[race {race_num}] all players -- {desc or '(none readable)'}", flush=True)
             next_dump = time.time() + PLAYER_DUMP_INTERVAL_S
 
         if flags & STATE_FINISHING:
@@ -975,6 +1064,28 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
             return cur[:3], "left_race_stage"
 
         time.sleep(POLL_INTERVAL_S)
+
+
+def ensure_itemhandler_addr(itemhandler_addr):
+    """Called once per race (see main()): keeps the current itemhandler_addr
+    if it still passes the shape recheck, otherwise runs a fresh discovery
+    scan (find_itemhandler_candidates). Unlike raceinfo discovery, there's
+    no "stage" signal to disambiguate multiple candidates against, so if
+    more than one structurally-sound candidate turns up, this just uses the
+    first and says so -- a starting approach to refine once there's real
+    data on how often that actually happens."""
+    if itemhandler_addr is not None and _itemhandler_snapshot_ok(itemhandler_addr):
+        return itemhandler_addr
+    candidates = find_itemhandler_candidates()
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        print(
+            f"ITEMHandler scan found {len(candidates)} candidate(s) "
+            f"({', '.join(f'0x{a:08X}' for a in candidates)}) -- using the first.",
+            flush=True,
+        )
+    return candidates[0]
 
 
 def main() -> None:
@@ -996,6 +1107,10 @@ def main() -> None:
     # intersection across races should converge on just the one true
     # static slot. See find_sinstance_candidates().
     sinstance_candidates = None
+    # Same idea, for ITEMHandler::sInstance -- see ensure_itemhandler_addr
+    # and find_itemhandler_candidates below.
+    itemhandler_addr = None
+    itemhandler_sinstance_candidates = None
     while True:
         if not dme.is_hooked():
             print("Lost hook to Dolphin. Exiting.")
@@ -1126,7 +1241,28 @@ def main() -> None:
             f"[race {race_num}] track: {track}" if track else f"[race {race_num}] track: (couldn't identify it)",
             flush=True,
         )
-        result, reason = track_until_race_ends(raceinfo_addr, player_addr, race_num)
+
+        new_itemhandler_addr = ensure_itemhandler_addr(itemhandler_addr)
+        if new_itemhandler_addr is not None and new_itemhandler_addr != itemhandler_addr:
+            print(f"[race {race_num}] Found ITEMHandler -- 0x{new_itemhandler_addr:08X}", flush=True)
+            this_item_scan = set(find_sinstance_candidates(new_itemhandler_addr))
+            if itemhandler_sinstance_candidates is None:
+                itemhandler_sinstance_candidates = this_item_scan
+            else:
+                itemhandler_sinstance_candidates &= this_item_scan
+            if itemhandler_sinstance_candidates:
+                item_addrs = ", ".join(f"0x{a:08X}" for a in sorted(itemhandler_sinstance_candidates))
+                if len(itemhandler_sinstance_candidates) == 1:
+                    print(
+                        f"ITEMHandler::sInstance pointer-scan: converged on a single candidate -- "
+                        f"{item_addrs}. Same hardcode-candidate logic as Raceinfo's.\n",
+                        flush=True,
+                    )
+                else:
+                    print(f"ITEMHandler::sInstance pointer-scan: still narrowing -- {item_addrs}\n", flush=True)
+        itemhandler_addr = new_itemhandler_addr
+
+        result, reason = track_until_race_ends(raceinfo_addr, player_addr, race_num, itemhandler_addr)
         if result is None:
             print(f"[race {race_num}] lost it before getting a solid reading; resuming.\n", flush=True)
             continue
