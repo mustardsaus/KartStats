@@ -102,7 +102,11 @@ REGIONS = [
 
 POLL_INTERVAL_S = 0.3
 STALE_READS_TO_GIVE_UP = 8  # ~2.4s of bad reads -- treat the hook/pointer as gone
-RESCAN_INTERVAL_S = 2.0     # how often to retry finding Raceinfo if not found yet
+RESCAN_INTERVAL_S = 0.5     # how often to retry finding Raceinfo if not found yet -- short,
+                             # so the one-time discovery scan finishes as soon as possible
+                             # after a race's settings load, ideally before the race itself
+                             # starts (start the script at the character/track-select screen,
+                             # not after you're already racing, to get lap 1 too)
 
 
 def hook_with_retry(timeout_s: float = 30.0) -> None:
