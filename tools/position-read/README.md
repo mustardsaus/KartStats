@@ -62,6 +62,47 @@ directly by you.
    pip install -r requirements.txt
    ```
 
+## Autonomous tracking (no manual scanning, no region address needed)
+
+`scripts/auto_track_race.py` supersedes the manual Cheat-Engine-style
+scanning in Step 1 below for actually playing. Instead of you (or me,
+driving the GUI) catching an exact value under time pressure, the script
+scans Dolphin's RAM itself for bytes that look like a real
+`(position, currentLap, maxLap)` triple, confirms the match over a couple
+of quick re-checks (a real struct's `maxLap` never changes mid-race, its
+lap never goes backwards — a coincidental match almost always fails that
+within a second or two), then polls it until the race ends and prints the
+final position. No manual "race started" / "race ended" signal needed,
+and no confirmed `Raceinfo::sInstance` address either — it finds the live
+struct fresh every race instead of walking a static pointer to it.
+
+**This must run with your Mac's own, native Python** — it attaches to
+Dolphin's actual process memory, which only works from something really
+running on your Mac (not through any sandboxed or remote shell). One-time
+setup, in your own Terminal:
+
+```
+cd tools/position-read
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+Then, with Dolphin open and re-signed (see one-time setup above):
+
+```
+python scripts/auto_track_race.py
+```
+
+Leave it running in that terminal while you play — it prints each race's
+final position as soon as that race ends, with no further input.
+
+This still uses the same struct offsets from mkw-structures as
+`probe_position.py` below, just found live instead of via a static
+address, so Step 1/Step 2 (and the region-address problem) remain here as
+the fallback/manual-verification path if the autonomous scan ever comes
+up empty or locks onto something clearly wrong.
+
 ## Step 1 — confirm your game's region
 
 The script's default address is the **PAL** `Raceinfo::sInstance`
@@ -130,5 +171,6 @@ tools/position-read/
 ├── README.md
 ├── requirements.txt
 └── scripts/
-    └── probe_position.py   # hooks Dolphin, reads + prints live position
+    ├── auto_track_race.py  # no manual scanning/address needed; prints each race's final position
+    └── probe_position.py   # manual/fallback: hooks Dolphin, reads + prints live position
 ```
