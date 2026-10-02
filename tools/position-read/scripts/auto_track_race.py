@@ -26,7 +26,8 @@ Because Raceinfo is a singleton, it can be found with a much stricter
 fingerprint than any per-player struct: several pointer fields that must
 all point into valid emulated-RAM ranges, plus a couple of small-int/bool
 fields, all at once. That combination is effectively impossible for
-unrelated memory to produce by coincidence -- see find_raceinfo() below.
+unrelated memory to produce by coincidence -- see find_raceinfo_candidates()
+below.
 And because it's a singleton that exists for the whole Dolphin session,
 it only has to be found ONCE, not re-scanned every race: no more chasing
 a reallocated struct, no more racer-identity ambiguity, no more guessing
@@ -242,15 +243,35 @@ def verify_raceinfo_candidate(addr: int) -> bool:
     return maxlap in (0, 3) and pos <= 12
 
 
-def find_raceinfo():
-    """One-time structural scan for the Raceinfo singleton. Returns its
-    address, or None if nothing in this pass both matched the vectorized
-    pointer-shape filter and survived scalar verification."""
+def find_raceinfo_candidates():
+    """One-time structural scan for the Raceinfo singleton. Returns every
+    address that matched the vectorized pointer-shape filter AND survived
+    scalar verification -- usually just one, but the filter is weaker
+    against real, densely-pointer-filled game memory than against random
+    noise (practically every real pointer in the process IS in the valid
+    MEM1/MEM2 range by construction, so any other object with a few pointer
+    members in the right positions can coincidentally pass too). Returning
+    all of them, with diagnostics, beats silently trusting the first one."""
+    found = []
     for start, end in REGIONS:
         for addr in scan_region_for_raceinfo(start, end):
             if verify_raceinfo_candidate(addr):
-                return addr
-    return None
+                found.append(addr)
+    return found
+
+
+def describe_candidate(addr: int) -> str:
+    """One-line diagnostic dump of a Raceinfo candidate, for the terminal --
+    so a wrong lock is visible immediately instead of just silence."""
+    stage = read_ptr(addr + RACEINFO_OFF_STAGE)
+    players_ptr = read_ptr(addr + RACEINFO_OFF_PLAYERS)
+    player0_ptr = get_local_player_addr(addr)
+    player = read_player(player0_ptr) if player0_ptr else None
+    player_desc = f"pos={player[0]} lap={player[1]}/{player[2]} flags=0x{player[3]:X}" if player else "unreadable"
+    return (
+        f"0x{addr:08X}: stage={stage}  players_ptr=0x{players_ptr:08X}  "
+        f"player0=0x{player0_ptr:08X}  ({player_desc})"
+    )
 
 
 def get_local_player_addr(raceinfo_addr: int):
@@ -260,14 +281,26 @@ def get_local_player_addr(raceinfo_addr: int):
     return read_ptr(players_ptr + PLAYER_SLOT_INDEX * POINTER_SIZE)
 
 
-def wait_for_race_start(raceinfo_addr: int):
-    """Block until Raceinfo.stage == 2 (actually racing, not the intro
-    camera or countdown) and the local player's struct looks live."""
+def wait_for_race_start(raceinfo_addr: int, timeout_s: float, status_every_s: float = 3.0):
+    """Wait up to timeout_s for Raceinfo.stage == 2 (actually racing, not
+    the intro camera or countdown) with a sane player read. Prints the
+    current stage every status_every_s so a wrong lock (stage stuck, or
+    nonsense) is visible on the terminal instead of looking identical to
+    "just waiting for you to start a race". Returns the player address, or
+    None on timeout / hook loss / a stage-2 reading that never yields a
+    sane player (pointer chain shifted -- a new Dolphin session)."""
+    deadline = time.time() + timeout_s
+    next_status = time.time()
     stale = 0
-    while True:
+    while time.time() < deadline:
         if not dme.is_hooked():
             return None
+
         stage = read_ptr(raceinfo_addr + RACEINFO_OFF_STAGE)
+        if time.time() >= next_status:
+            print(f"  (0x{raceinfo_addr:08X}: stage={stage})", flush=True)
+            next_status = time.time() + status_every_s
+
         if stage == 2:
             player_addr = get_local_player_addr(raceinfo_addr)
             if player_addr:
@@ -275,14 +308,12 @@ def wait_for_race_start(raceinfo_addr: int):
                 if cur is not None:
                     return player_addr
             stale += 1
+            if stale >= STALE_READS_TO_GIVE_UP:
+                return None
         else:
             stale = 0
-        if stale >= STALE_READS_TO_GIVE_UP:
-            # stage says "race" but we can't get a sane player read -- the
-            # pointer chain may have shifted (new Dolphin session). Bail out
-            # to the caller so it can re-find Raceinfo from scratch.
-            return None
         time.sleep(POLL_INTERVAL_S)
+    return None
 
 
 def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
@@ -344,19 +375,47 @@ def main() -> None:
 
         if raceinfo_addr is None:
             print("Looking for Raceinfo (one-time; this address stays valid all session)...", flush=True)
-            raceinfo_addr = find_raceinfo()
-            if raceinfo_addr is None:
+            candidates = find_raceinfo_candidates()
+            if not candidates:
                 time.sleep(RESCAN_INTERVAL_S)
                 continue
-            print(f"Found Raceinfo at 0x{raceinfo_addr:08X}.\n", flush=True)
 
-        player_addr = wait_for_race_start(raceinfo_addr)
-        if player_addr is None:
-            # Either Dolphin's gone, or this address stopped making sense
-            # (new session) -- drop it and look again from scratch.
-            if dme.is_hooked():
-                raceinfo_addr = None
-            continue
+            print(f"Found {len(candidates)} candidate(s):", flush=True)
+            for addr in candidates:
+                print(f"  {describe_candidate(addr)}", flush=True)
+
+            # The structural filter is far more selective against random
+            # noise than against real, densely-pointer-filled game memory
+            # (practically every real pointer in the process IS in-range by
+            # construction), so more than one candidate can pass. Try each
+            # for a bounded window and keep whichever one actually reaches
+            # stage 2 with a sane player read -- if none do, these were all
+            # false positives (or no race has started yet) and we rescan.
+            per_candidate_timeout = 15.0 if len(candidates) > 1 else 9e9
+            found_player_addr = None
+            for addr in candidates:
+                print(f"Trying 0x{addr:08X}...", flush=True)
+                player_addr = wait_for_race_start(addr, timeout_s=per_candidate_timeout)
+                if player_addr is not None:
+                    raceinfo_addr = addr
+                    found_player_addr = player_addr
+                    print(f"Confirmed -- 0x{addr:08X} reached stage 2 with a real player read.\n", flush=True)
+                    break
+                if not dme.is_hooked():
+                    return
+
+            if found_player_addr is None:
+                print("None of these reached a real race within the wait window; rescanning.\n", flush=True)
+                continue
+            player_addr = found_player_addr
+        else:
+            player_addr = wait_for_race_start(raceinfo_addr, timeout_s=9e9)
+            if player_addr is None:
+                # Either Dolphin's gone, or this address stopped making sense
+                # (new session) -- drop it and look again from scratch.
+                if dme.is_hooked():
+                    raceinfo_addr = None
+                continue
 
         race_num += 1
         result, reason = track_until_race_ends(raceinfo_addr, player_addr, race_num)
