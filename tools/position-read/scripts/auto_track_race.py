@@ -93,6 +93,50 @@ STATE_COMING_LAST_ANIM = 0x40
 POINTER_SIZE = 4  # 32-bit PowerPC target
 PLAYER_SLOT_INDEX = 0  # players[0] is the local player in single-player
 
+# --- Racedata settings (the chosen course/cup/lap-count for the race) ------
+# A SEPARATE singleton from Raceinfo -- racedata.h has no course/track field
+# anywhere in Raceinfo/RaceinfoPlayer, it lives in Racedata's nested
+# RacedataSettings struct instead. No pointer connects the two, so this
+# needs its own independent memory scan rather than an offset off the
+# Raceinfo address we already have.
+RACEDATA_OFF_COURSE_ID = 0x0        # uint32 -- see TRACK_NAMES below
+RACEDATA_OFF_ENGINE_CLASS = 0x4     # uint32, small enum (50cc/100cc/150cc/mirror)
+RACEDATA_OFF_GAMEMODE = 0x8         # uint32, small enum
+RACEDATA_OFF_CPU_MODE = 0x14        # uint32, small enum
+RACEDATA_OFF_ITEM_MODE = 0x18       # uint32, small enum
+RACEDATA_OFF_CUP_ID = 0x20          # uint32
+RACEDATA_OFF_RACE_NUMBER = 0x24     # uint8_t, 0-3 (which race in the cup)
+RACEDATA_OFF_LAP_COUNT = 0x25       # uint8_t -- always 3 for a real MKW race,
+                                     # the strongest single filter here (same
+                                     # role RaceinfoPlayer.maxLap played)
+RACEDATA_SETTINGS_SIZE = 0x28
+
+# Course IDs per http://wiki.tockdom.com/wiki/List_of_Identifiers#Courses
+# (the same source racedata.h's own comment points to).
+TRACK_NAMES = {
+    0x00: "Mario Circuit", 0x01: "Moo Moo Meadows", 0x02: "Mushroom Gorge",
+    0x03: "Grumble Volcano", 0x04: "Toad's Factory", 0x05: "Coconut Mall",
+    0x06: "DK Summit", 0x07: "Wario's Gold Mine", 0x08: "Luigi Circuit",
+    0x09: "Daisy Circuit", 0x0A: "Moonview Highway", 0x0B: "Maple Treeway",
+    0x0C: "Bowser's Castle", 0x0D: "Rainbow Road", 0x0E: "Dry Dry Ruins",
+    0x0F: "Koopa Cape",
+    0x10: "GCN Peach Beach", 0x11: "GCN Mario Circuit", 0x12: "GCN Waluigi Stadium",
+    0x13: "GCN DK Mountain", 0x14: "DS Yoshi Falls", 0x15: "DS Desert Hills",
+    0x16: "DS Peach Gardens", 0x17: "DS Delfino Square", 0x18: "SNES Mario Circuit 3",
+    0x19: "SNES Ghost Valley 2", 0x1A: "N64 Mario Raceway", 0x1B: "N64 Sherbet Land",
+    0x1C: "N64 Bowser's Castle", 0x1D: "N64 DK's Jungle Parkway",
+    0x1E: "GBA Bowser Castle 3", 0x1F: "GBA Shy Guy Beach",
+    0x20: "Delfino Pier", 0x21: "Block Plaza", 0x22: "Chain Chomp Wheel",
+    0x23: "Funky Stadium", 0x24: "Thwomp Desert", 0x25: "GCN Cookie Land",
+    0x26: "DS Twilight House", 0x27: "SNES Battle Course 4",
+    0x28: "GBA Battle Course 3", 0x29: "N64 Skyscraper",
+}
+
+
+def track_name(course_id: int) -> str:
+    return TRACK_NAMES.get(course_id, f"unknown track (id 0x{course_id:02X})")
+
+
 # Wii has two RAM pools; Raceinfo (and the structs it points to) could land
 # in either.
 REGIONS = [
@@ -192,6 +236,76 @@ def scan_region_for_raceinfo(start: int, end: int):
     )
     idxs = np.nonzero(mask)[0]
     return [int(start + i * 4) for i in idxs]
+
+
+def scan_region_for_racedata_settings(start: int, end: int):
+    """One vectorized pass over [start, end) for 4-byte-aligned addresses
+    that look like a RacedataSettings block (the course/cup/lap-count
+    chosen for the current race). Unlike Raceinfo, this struct has no
+    pointers in it -- it's all small plain values -- so the fingerprint
+    instead stacks several independent small-range constraints at once.
+    lapCount==3 carries most of the weight (every real MKW race is exactly
+    3 laps, so this is a ~1/256 coincidence for unrelated memory, the same
+    role RaceinfoPlayer.maxLap played); the rest narrow it further. This is
+    a newer, less load-tested fingerprint than the Raceinfo one -- expect
+    to possibly need tightening after seeing it against real memory."""
+    size = end - start
+    try:
+        buf = dme.read_bytes(start, size)
+    except Exception as exc:
+        print(f"  (couldn't read 0x{start:08X}-0x{end:08X}: {exc})")
+        return []
+
+    arr = np.frombuffer(buf, dtype=np.uint8)
+    n = (len(arr) - RACEDATA_SETTINGS_SIZE) // 4 + 1
+    if n <= 0:
+        return []
+
+    course_id = _read_u32_field(arr, RACEDATA_OFF_COURSE_ID, n)
+    engine_class = _read_u32_field(arr, RACEDATA_OFF_ENGINE_CLASS, n)
+    gamemode = _read_u32_field(arr, RACEDATA_OFF_GAMEMODE, n)
+    cpu_mode = _read_u32_field(arr, RACEDATA_OFF_CPU_MODE, n)
+    item_mode = _read_u32_field(arr, RACEDATA_OFF_ITEM_MODE, n)
+    cup_id = _read_u32_field(arr, RACEDATA_OFF_CUP_ID, n)
+    L = min(len(course_id), len(engine_class), len(gamemode), len(cpu_mode), len(item_mode), len(cup_id))
+    course_id, engine_class, gamemode, cpu_mode, item_mode, cup_id = (
+        course_id[:L], engine_class[:L], gamemode[:L], cpu_mode[:L], item_mode[:L], cup_id[:L],
+    )
+    race_number = _read_u8_field(arr, RACEDATA_OFF_RACE_NUMBER, n)[:L]
+    lap_count = _read_u8_field(arr, RACEDATA_OFF_LAP_COUNT, n)[:L]
+
+    mask = (
+        (lap_count == 3)
+        & (course_id <= 0x29)
+        & (engine_class <= 5)
+        & (gamemode <= 10)
+        & (cpu_mode <= 10)
+        & (item_mode <= 5)
+        & (cup_id <= 0x30)
+        & (race_number <= 3)
+    )
+    idxs = np.nonzero(mask)[0]
+    return [int(start + i * 4) for i in idxs]
+
+
+def find_track_name():
+    """Looks up the current course fresh, every time it's called -- not
+    cached. Raceinfo itself turned out not to reliably survive every
+    track/cup transition despite being documented as a permanent singleton
+    (see the dead-address fix a couple commits back), so there's no reason
+    to assume Racedata's settings block would either. Returns a display
+    string, or None if the scan found nothing or found more than one match
+    (ambiguous -- better to just omit the track name for a race than
+    print a wrong one)."""
+    found = []
+    for start, end in REGIONS:
+        found.extend(scan_region_for_racedata_settings(start, end))
+    if len(found) != 1:
+        return None
+    course_id = read_ptr(found[0] + RACEDATA_OFF_COURSE_ID)
+    if course_id is None:
+        return None
+    return track_name(course_id)
 
 
 def read_ptr(addr: int):
@@ -519,6 +633,11 @@ def main() -> None:
                 continue
 
         race_num += 1
+        track = find_track_name()
+        print(
+            f"[race {race_num}] track: {track}" if track else f"[race {race_num}] track: (couldn't identify it)",
+            flush=True,
+        )
         result, reason = track_until_race_ends(raceinfo_addr, player_addr, race_num)
         if result is None:
             print(f"[race {race_num}] lost it before getting a solid reading; resuming.\n", flush=True)
@@ -527,7 +646,7 @@ def main() -> None:
         pos, lap, maxlap = result
         print(
             f"[race {race_num}] FINAL POSITION: {pos}  "
-            f"(lap {lap}/{maxlap}, ended via {reason})\n",
+            f"(lap {lap}/{maxlap}, {track or 'unknown track'}, ended via {reason})\n",
             flush=True,
         )
 
