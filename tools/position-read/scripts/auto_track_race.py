@@ -473,17 +473,23 @@ def wait_for_race_start(raceinfo_addr: int, timeout_s: float, status_every_s: fl
     the intro camera or countdown) with a sane player read. Prints the
     current stage every status_every_s so a wrong lock (stage stuck, or
     nonsense) is visible on the terminal instead of looking identical to
-    "just waiting for you to start a race". On that same cadence, also
-    re-checks that the candidate still structurally looks like Raceinfo
-    (see _raceinfo_still_plausible) and bails out early if it doesn't --
-    otherwise a struct that died between races would look exactly like
-    "stage stuck at 0, still waiting for the next race" forever. Returns
-    the player address, or None on timeout / hook loss / a dead struct /
-    a stage-2 reading that never yields a sane player (pointer chain
-    shifted -- a new Dolphin session)."""
+    "just waiting for you to start a race". Also re-checks, every tick,
+    that the candidate still structurally looks like Raceinfo (see
+    _raceinfo_still_plausible) -- otherwise a struct that died between
+    races would look exactly like "stage stuck at 0, still waiting for the
+    next race" forever. That re-check needs several CONSECUTIVE failures
+    before giving up, not just one: found via live testing that a single
+    bad read (likely a transient IPC hiccup, or the game briefly mid-write)
+    was enough to throw away a real, correctly-identified candidate and
+    force a full rescan, even though it was fine on every other read
+    before and after. Returns the player address, or None on timeout / hook
+    loss / several consecutive implausible reads in a row / a stage-2
+    reading that never yields a sane player (pointer chain shifted -- a
+    new Dolphin session)."""
     deadline = time.time() + timeout_s
     next_status = time.time()
-    stale = 0
+    player_stale = 0
+    implausible_streak = 0
     while time.time() < deadline:
         if not dme.is_hooked():
             return None
@@ -492,25 +498,31 @@ def wait_for_race_start(raceinfo_addr: int, timeout_s: float, status_every_s: fl
         if time.time() >= next_status:
             print(f"  (0x{raceinfo_addr:08X}: stage={stage})", flush=True)
             next_status = time.time() + status_every_s
-            if stage != 2 and not _raceinfo_still_plausible(raceinfo_addr):
-                print(
-                    f"  (0x{raceinfo_addr:08X} no longer looks like Raceinfo -- "
-                    "it likely didn't survive the track/cup transition; rescanning)",
-                    flush=True,
-                )
-                return None
 
         if stage == 2:
+            implausible_streak = 0
             player_addr = get_local_player_addr(raceinfo_addr)
             if player_addr:
                 cur = read_player(player_addr)
                 if cur is not None:
                     return player_addr
-            stale += 1
-            if stale >= STALE_READS_TO_GIVE_UP:
+            player_stale += 1
+            if player_stale >= STALE_READS_TO_GIVE_UP:
                 return None
         else:
-            stale = 0
+            player_stale = 0
+            if stage is None or not _raceinfo_still_plausible(raceinfo_addr):
+                implausible_streak += 1
+                if implausible_streak >= STALE_READS_TO_GIVE_UP:
+                    print(
+                        f"  (0x{raceinfo_addr:08X} no longer looks like Raceinfo after "
+                        f"{implausible_streak} reads in a row -- it likely didn't survive "
+                        "the track/cup transition; rescanning)",
+                        flush=True,
+                    )
+                    return None
+            else:
+                implausible_streak = 0
         time.sleep(POLL_INTERVAL_S)
     return None
 
@@ -535,11 +547,21 @@ def wait_for_any_race_start(candidates, timeout_s: float, status_every_s: float 
     Checking every candidate on every tick removes that multiplier
     entirely: lock-on time is bounded by how fast the real race actually
     reaches stage 2, not by how many look-alikes happen to rank ahead of
-    it. Returns (raceinfo_addr, player_addr), or (None, None) on timeout /
-    hook loss / every candidate going implausible."""
+    it.
+
+    A candidate is only dropped after several CONSECUTIVE bad reads, not
+    one: found via live testing that a single real, correctly-identified
+    candidate (stage=0, sane pos/lap, maxLap=3 -- caught at a menu, before
+    the race itself had started) got thrown away after one single bad
+    plausibility read -- likely a transient IPC hiccup, or the game
+    briefly mid-write -- forcing a full rescan for no real reason. Returns
+    (raceinfo_addr, player_addr), or (None, None) on timeout / hook loss /
+    every candidate going implausible for several reads running."""
     deadline = time.time() + timeout_s
     next_status = time.time()
-    stale = {addr: 0 for addr in candidates}  # addr -> consecutive bad-player-read count
+    player_stale = {addr: 0 for addr in candidates}       # consecutive bad-player-read count
+    implausible_streak = {addr: 0 for addr in candidates}  # consecutive implausible-read count
+    alive = set(candidates)
     while time.time() < deadline:
         if not dme.is_hooked():
             return None, None
@@ -548,25 +570,30 @@ def wait_for_any_race_start(candidates, timeout_s: float, status_every_s: float 
         if show_status:
             next_status = time.time() + status_every_s
 
-        for addr in list(stale.keys()):
+        for addr in list(alive):
             stage = read_ptr(addr + RACEINFO_OFF_STAGE)
             if show_status:
                 print(f"  (0x{addr:08X}: stage={stage})", flush=True)
 
             if stage == 2:
+                implausible_streak[addr] = 0
                 player_addr = get_local_player_addr(addr)
                 cur = read_player(player_addr) if player_addr else None
                 if cur is not None:
                     return addr, player_addr
-                stale[addr] += 1
-                if stale[addr] >= STALE_READS_TO_GIVE_UP:
-                    del stale[addr]
-            elif stage is None or not _raceinfo_still_plausible(addr):
-                del stale[addr]
+                player_stale[addr] += 1
+                if player_stale[addr] >= STALE_READS_TO_GIVE_UP:
+                    alive.discard(addr)
             else:
-                stale[addr] = 0
+                player_stale[addr] = 0
+                if stage is None or not _raceinfo_still_plausible(addr):
+                    implausible_streak[addr] += 1
+                    if implausible_streak[addr] >= STALE_READS_TO_GIVE_UP:
+                        alive.discard(addr)
+                else:
+                    implausible_streak[addr] = 0
 
-        if not stale:
+        if not alive:
             return None, None
         time.sleep(POLL_INTERVAL_S)
     return None, None
