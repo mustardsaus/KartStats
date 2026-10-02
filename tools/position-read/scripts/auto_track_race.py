@@ -231,15 +231,29 @@ def find_player_array():
     idx = PLAYER_SLOT_INDEX if PLAYER_SLOT_INDEX < len(best_run) else 0
     addr = best_run[idx]
 
-    # One more check before trusting this: if the chosen slot already reads
-    # as "finished" (lap > maxLap) the instant we find it, that's not a race
-    # in progress -- it's the previous race's result still sitting there,
-    # not yet reset because a new race hasn't actually started. Locking onto
-    # that reports a stale leftover as a brand new "race" with nothing having
-    # been played. Only trust a fresh find that still looks live.
+    # Two more checks before trusting this, both cheap (a couple of extra
+    # reads of one address, not another full memory scan):
+    #
+    # 1. If the chosen slot already reads as "finished" (lap > maxLap) the
+    #    instant we find it, that's not a race in progress -- it's the
+    #    previous race's result still sitting there, not yet reset because a
+    #    new race hasn't actually started. Locking onto that reports a stale
+    #    leftover as a brand new "race" with nothing having been played.
+    #
+    # 2. A brief pause, then read again: a one-off glitch (caught mid-write,
+    #    a frame where this address briefly looked array-like before
+    #    settling into its real contents or getting zeroed) won't still look
+    #    valid a moment later. A real race's struct will. This is what
+    #    caught locking onto "position 0, lap 0/0" that vanished immediately.
     cur = read_one(addr)
     if cur is None or cur[1] > cur[2]:
         return None
+
+    time.sleep(0.3)
+    cur2 = read_one(addr)
+    if cur2 is None or not (POSITION_MIN <= cur2[0] <= POSITION_MAX) or cur2[2] != cur[2] or cur2[1] > cur2[2]:
+        return None
+
     return addr
 
 
