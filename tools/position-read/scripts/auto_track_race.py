@@ -73,6 +73,7 @@ NARROW_ROUNDS = 5
 NARROW_INTERVAL_S = 1.2
 POLL_INTERVAL_S = 0.3
 STALE_READS_TO_GIVE_UP = 4  # ~1.2s of bad reads = struct's gone
+FROZEN_POLLS_TO_FINISH = 10  # ~3s of a completely unchanged reading on the last lap
 
 
 def hook_with_retry(timeout_s: float = 30.0) -> None:
@@ -195,12 +196,33 @@ def find_live_struct():
     return moving[0] if moving else next(iter(history))
 
 
-def track_until_race_ends(addr: int):
-    """Poll one locked address until it stops looking like a live race.
-    Returns ((pos, lap, maxlap), reason) using the last valid reading, or
-    (None, "hook_lost") if Dolphin itself went away."""
+def track_until_race_ends(addr: int, race_num: int):
+    """Poll one locked address until it stops looking like a live race,
+    printing a line every time the position or lap actually changes (so
+    there's visible life, not silence until the very end). Returns
+    ((pos, lap, maxlap), reason) using the last valid reading, or
+    (None, "hook_lost") if Dolphin itself went away.
+
+    Three ways a race is considered over:
+      - "finished": currentLap ticks past maxLap -- the tell for actually
+        crossing the finish line, per raceinfo.h.
+      - "struct_gone": reads stop looking valid at all (torn down between
+        races).
+      - "frozen_on_last_lap": the reading stops changing at all, for a few
+        seconds, while already on the last lap -- covers games/tracks where
+        the results/podium screen keeps the struct alive with frozen final
+        values instead of tearing it down or ticking the lap counter over.
+    """
     last_valid = None
     stale_reads = 0
+    frozen_streak = 0
+
+    first = read_one(addr)
+    if first is not None:
+        pos, lap, maxlap = first
+        print(f"[race {race_num}] starting position: {pos}  (lap {lap}/{maxlap})", flush=True)
+        last_valid = first
+
     while True:
         if not dme.is_hooked():
             return None, "hook_lost"
@@ -217,9 +239,21 @@ def track_until_race_ends(addr: int):
 
         if valid:
             stale_reads = 0
-            last_valid = cur
             if cur[1] > cur[2]:  # currentLap > maxLap: crossed the finish line
-                return last_valid, "finished"
+                return cur, "finished"
+
+            if last_valid is not None and cur == last_valid:
+                frozen_streak += 1
+                if cur[1] >= cur[2] and frozen_streak >= FROZEN_POLLS_TO_FINISH:
+                    return cur, "frozen_on_last_lap"
+            else:
+                frozen_streak = 0
+                if last_valid is not None and (cur[0] != last_valid[0] or cur[1] != last_valid[1]):
+                    print(
+                        f"[race {race_num}] position: {cur[0]}  (lap {cur[1]}/{cur[2]})",
+                        flush=True,
+                    )
+                last_valid = cur
         else:
             stale_reads += 1
 
@@ -248,16 +282,17 @@ def main() -> None:
             continue
 
         race_num += 1
-        print(f"[race {race_num}] locked onto 0x{addr:08X} -- tracking...")
-        result, reason = track_until_race_ends(addr)
+        print(f"[race {race_num}] locked onto 0x{addr:08X} -- tracking...", flush=True)
+        result, reason = track_until_race_ends(addr, race_num)
         if result is None:
-            print(f"[race {race_num}] lost it before getting a solid reading; resuming scan.\n")
+            print(f"[race {race_num}] lost it before getting a solid reading; resuming scan.\n", flush=True)
             continue
 
         pos, lap, maxlap = result
         print(
             f"[race {race_num}] FINAL POSITION: {pos}  "
-            f"(lap {lap}/{maxlap}, ended via {reason})\n"
+            f"(lap {lap}/{maxlap}, ended via {reason})\n",
+            flush=True,
         )
 
 
