@@ -152,6 +152,21 @@ RESCAN_INTERVAL_S = 0.5     # how often to retry finding Raceinfo if not found y
                              # starts (start the script at the character/track-select screen,
                              # not after you're already racing, to get lap 1 too)
 
+# Raceinfo::sInstance -- the permanent static pointer slot the game itself
+# keeps pointed at the current Raceinfo object, discovered empirically via
+# find_sinstance_candidates()'s reverse-pointer-scan-and-intersect-across-
+# races technique. Live testing confirmed it: the reverse scan converged on
+# this EXACT address in two separate real races, even though the Raceinfo
+# object itself landed at two different heap addresses in those same two
+# races (0x8111C4D8, then 0x81119770) -- the "pointer stays put, object
+# moves" signature of a real static instance pointer, not a coincidence.
+# This is specific to this exact game build/region (RMCE01, NTSC-U) the
+# same way PAL's published 0x809bd730 is specific to PAL -- if this ever
+# stops matching (a different ISO, a romhack, a Dolphin/game update),
+# try_fast_path() below fails its sanity check and the blind scan takes
+# over again automatically, so nothing breaks, it just gets slow again.
+SINSTANCE_ADDR = 0x809B8F70
+
 
 def hook_with_retry(timeout_s: float = 30.0) -> None:
     print("Hooking into Dolphin...")
@@ -508,6 +523,37 @@ def verify_raceinfo_candidate(addr: int, counts=None) -> bool:
     return True
 
 
+def try_fast_path():
+    """Dereference SINSTANCE_ADDR directly instead of blind-scanning all of
+    MEM1+MEM2 for something Raceinfo-shaped. This sidesteps the whole
+    blind-scan problem, including the lap-3 lock-on delay the verify funnel
+    traced back to random1/random2: that delay came from REQUIRING those
+    two fields to look like pointers as part of a blind shape filter, which
+    only matters when you don't already know the address. Here we already
+    have the one authoritative address, so there's no shape-guessing left
+    to do -- only a light sanity check (stage small, players_ptr valid),
+    not the strict maxLap==3 filter the blind scan needed to avoid false
+    positives.
+
+    Returns the Raceinfo object's current address, or None if the pointer
+    doesn't look right (not yet initialized this early in boot, or a
+    different game build/region where SINSTANCE_ADDR isn't this)."""
+    addr = read_ptr(SINSTANCE_ADDR)
+    if addr is None or not (
+        0x80000000 <= addr < 0x81800000 or 0x90000000 <= addr < 0x94000000
+    ):
+        return None
+    stage = read_ptr(addr + RACEINFO_OFF_STAGE)
+    if stage is None or not (0 <= stage <= 2):
+        return None
+    players_ptr = read_ptr(addr + RACEINFO_OFF_PLAYERS)
+    if players_ptr is None or not (
+        0x80000000 <= players_ptr < 0x81800000 or 0x90000000 <= players_ptr < 0x94000000
+    ):
+        return None
+    return addr
+
+
 def find_raceinfo_candidates():
     """One-time structural scan for the Raceinfo singleton. Returns every
     address that matched the vectorized pointer-shape filter AND survived
@@ -812,6 +858,25 @@ def main() -> None:
             return
 
         if raceinfo_addr is None:
+            # Try the direct route first: dereference the known-good
+            # sInstance pointer slot (see SINSTANCE_ADDR / try_fast_path)
+            # instead of blind-scanning. Cheap (3 reads) and retried every
+            # loop tick, so the very first tick it looks right, lock-on is
+            # effectively instant -- no more waiting for a race to reach
+            # lap 3. Falls through to the full scan below whenever it
+            # doesn't check out yet (too early in boot) or ever stops
+            # checking out (wrong game build/region) -- that fallback is
+            # left fully intact on purpose.
+            fast_addr = try_fast_path()
+            if fast_addr is not None:
+                print(
+                    f"Fast path -- Raceinfo::sInstance (0x{SINSTANCE_ADDR:08X}) -> "
+                    f"0x{fast_addr:08X}; skipping the scan.\n  {describe_candidate(fast_addr)}\n",
+                    flush=True,
+                )
+                raceinfo_addr = fast_addr
+                continue
+
             # Rescanning every RESCAN_INTERVAL_S (0.5s) so lock-on happens as
             # soon as a race's settings load -- including if you start this
             # before you've even picked a race, straight from the menus.
