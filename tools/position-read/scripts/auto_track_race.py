@@ -184,79 +184,6 @@ STANDARD_LAP_COUNT = 3
 MAX_PLAYER_SLOTS = 12
 PLAYER_DUMP_INTERVAL_S = 1.0
 
-# --- Item state (ITEMHandler), from itemhandler.h + the tockdom wiki's --------
-# MKWii_Network_Protocol/ITEM page (which itemhandler.h itself cites, and which
-# has the actual byte layout of ITEMPacket that itemhandler.h doesn't inline).
-#
-# UNVERIFIED FOR NTSC-U -- unlike SINSTANCE_ADDR above, which was confirmed
-# live (the pointer-scan-and-intersect-across-races technique, run against
-# real Dolphin memory, more than once). This is only a GUESS, carried over
-# from a single confirmed data point: PAL Raceinfo::sInstance (0x809bd730)
-# and our confirmed NTSC-U Raceinfo::sInstance (0x809B8F70) differ by exactly
-# 0x47C0. Applying that same delta to the documented PAL ITEMHandler::sInstance
-# (0x809C20F8) gives 0x809BD938 -- but a single matching delta on one symbol
-# doesn't prove the whole binary's static data is offset by one constant
-# everywhere. Treat every value read_item_box() below produces as a
-# hypothesis to confirm against real gameplay (does it actually say
-# "Mushroom" right when a mushroom is picked up?), not a trusted result --
-# the same way Raceinfo's own address needed confirming before patch 27
-# hardcoded it. If it's consistently wrong/garbage, the next step is the
-# exact same reverse-pointer-scan technique that found Raceinfo's, not
-# tweaking this guess.
-ITEMHANDLER_SINSTANCE_HYPOTHESIS = 0x809BD938
-ITEMHANDLER_OFF_RECV_PACKETS = 0x10  # recvPackets[12], right after sendPackets[2] (2 * 8 bytes)
-ITEMPACKET_SIZE = 0x8
-ITEMPACKET_OFF_ITEM_BOX = 0x01  # the item currently held / the roulette result
-ITEMPACKET_OFF_MODE = 0x03      # 0 = no item, 1-7 = handshake/activation states
-
-ITEM_NAMES = {
-    0x00: "Green Shell", 0x01: "Red Shell", 0x02: "Banana", 0x03: "Fake Item Box",
-    0x04: "Mushroom", 0x05: "Triple Mushroom", 0x06: "Bob-omb", 0x07: "Spiny Shell",
-    0x08: "Lightning", 0x09: "Star", 0x0A: "Golden Mushroom", 0x0B: "Mega Mushroom",
-    0x0C: "Blooper", 0x0D: "POW Block", 0x0E: "Thundercloud", 0x0F: "Bullet Bill",
-    0x10: "Triple Green Shell", 0x11: "Triple Red Shell", 0x12: "Triple Banana",
-    0x14: "(no item)",
-}
-
-
-def item_name(item_id: int) -> str:
-    return ITEM_NAMES.get(item_id, f"unknown item (id 0x{item_id:02X})")
-
-
-def read_item_box(player_id: int):
-    """UNVERIFIED hypothesis path -- see ITEMHANDLER_SINSTANCE_HYPOTHESIS's
-    comment. Dereferences the guessed NTSC-U ITEMHandler::sInstance, then
-    reads recvPackets[player_id] (item_box at +0x1, mode at +0x3). Returns
-    (item_id, mode), or None if anything along the chain doesn't look sane
-    (mode must be 0-7) -- which would mean the hypothesis address is simply
-    wrong, not that this particular read glitched."""
-    handler_addr = read_ptr(ITEMHANDLER_SINSTANCE_HYPOTHESIS)
-    if handler_addr is None or not (
-        0x80000000 <= handler_addr < 0x81800000 or 0x90000000 <= handler_addr < 0x94000000
-    ):
-        return None
-    packet_addr = handler_addr + ITEMHANDLER_OFF_RECV_PACKETS + player_id * ITEMPACKET_SIZE
-    try:
-        item_id = dme.read_byte(packet_addr + ITEMPACKET_OFF_ITEM_BOX)
-        mode = dme.read_byte(packet_addr + ITEMPACKET_OFF_MODE)
-    except Exception:
-        return None
-    if mode > 7:
-        return None
-    return item_id, mode
-
-
-def _item_suffix(player_id: int) -> str:
-    """One-line add-on for the player dump: ' item=Mushroom(mode=3)', or ''
-    if the (unverified) item hypothesis didn't produce a sane read this
-    tick. Kept separate from read_item_box so a dump line never crashes on
-    a bad item read -- it just silently omits the item part for that slot."""
-    result = read_item_box(player_id)
-    if result is None:
-        return ""
-    item_id, mode = result
-    return f" item={item_name(item_id)}(mode={mode})"
-
 
 def hook_with_retry(timeout_s: float = 30.0) -> None:
     print("Hooking into Dolphin...")
@@ -959,14 +886,10 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
             players_ptr = read_ptr(raceinfo_addr + RACEINFO_OFF_PLAYERS)
             slots = read_all_players(players_ptr) if players_ptr else []
             desc = " | ".join(
-                f"slot{i}(id={pid}): pos={p} lap={l}/{m} flags=0x{f:X}{_item_suffix(pid)}"
+                f"slot{i}(id={pid}): pos={p} lap={l}/{m} flags=0x{f:X}"
                 for i, pid, p, l, m, f in slots
             )
-            print(
-                f"[race {race_num}] all players -- {desc or '(none readable)'}  "
-                "[item=... is an UNVERIFIED hypothesis -- see if it's actually right]",
-                flush=True,
-            )
+            print(f"[race {race_num}] all players -- {desc or '(none readable)'}", flush=True)
             next_dump = time.time() + PLAYER_DUMP_INTERVAL_S
 
         if flags & STATE_FINISHING:
