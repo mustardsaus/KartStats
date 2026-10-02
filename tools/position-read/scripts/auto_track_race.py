@@ -418,13 +418,32 @@ def find_raceinfo_candidates():
     noise (practically every real pointer in the process IS in the valid
     MEM1/MEM2 range by construction, so any other object with a few pointer
     members in the right positions can coincidentally pass too). Returning
-    all of them, with diagnostics, beats silently trusting the first one."""
+    all of them, with diagnostics, beats silently trusting the first one.
+
+    Also returns (as the second element) a breakdown of how long the scan
+    itself took, per region, plus how much of that was spent inside the
+    scalar verify step (which includes a deliberate 0.4s sleep per
+    snap1-passing raw hit -- see verify_raceinfo_candidate). Lock-on has
+    twice now taken 70-85s in live testing, landing right around lap 3
+    both times regardless of which race -- a suspiciously consistent
+    duration that points at the scan itself being slow (reading all of
+    MEM1+MEM2 through the Python bindings every attempt) rather than at
+    anything about when the real object becomes valid. This timing makes
+    that measurable instead of guessed at."""
     found = []
+    timing = []
     for start, end in REGIONS:
-        for addr in scan_region_for_raceinfo(start, end):
+        t_scan_start = time.time()
+        raw_hits = scan_region_for_raceinfo(start, end)
+        t_scan_done = time.time()
+        for addr in raw_hits:
             if verify_raceinfo_candidate(addr):
                 found.append(addr)
-    return found
+        t_verify_done = time.time()
+        timing.append(
+            (start, end, len(raw_hits), t_scan_done - t_scan_start, t_verify_done - t_scan_done)
+        )
+    return found, timing
 
 
 def describe_candidate(addr: int) -> str:
@@ -670,11 +689,20 @@ def main() -> None:
             # before you've even picked a race, straight from the menus.
             # Logging that search itself only every 5s, not every retry, so
             # sitting in menus for a few minutes doesn't flood the terminal
-            # with hundreds of identical "looking" lines.
+            # with hundreds of identical "looking" lines. Printing the last
+            # scan's timing breakdown alongside it -- see find_raceinfo_candidates'
+            # docstring for why: lock-on has taken 70-85s twice in live
+            # testing and this measures exactly where that time goes
+            # instead of guessing.
+            candidates, timing = find_raceinfo_candidates()
             if time.time() >= next_search_log:
-                print("Looking for Raceinfo (one-time; this address stays valid all session)...", flush=True)
+                breakdown = "; ".join(
+                    f"0x{start:08X}-0x{end:08X}: {n_hits} raw hit(s), "
+                    f"scan {scan_s:.2f}s, verify {verify_s:.2f}s"
+                    for start, end, n_hits, scan_s, verify_s in timing
+                )
+                print(f"Looking for Raceinfo... [{breakdown}]", flush=True)
                 next_search_log = time.time() + 5.0
-            candidates = find_raceinfo_candidates()
             if not candidates:
                 time.sleep(RESCAN_INTERVAL_S)
                 continue
