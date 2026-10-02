@@ -204,12 +204,12 @@ def scan_region_for_raceinfo(start: int, end: int):
         buf = dme.read_bytes(start, size)
     except Exception as exc:
         print(f"  (couldn't read 0x{start:08X}-0x{end:08X}: {exc})")
-        return []
+        return [], 0
 
     arr = np.frombuffer(buf, dtype=np.uint8)
     n = (len(arr) - RACEINFO_SIZE) // 4 + 1
     if n <= 0:
-        return []
+        return [], 0
 
     stage_vals = _read_u32_field(arr, RACEINFO_OFF_STAGE, n)
     random1_vals = _read_u32_field(arr, RACEINFO_OFF_RANDOM1, n)
@@ -235,7 +235,29 @@ def scan_region_for_raceinfo(start: int, end: int):
         & (cutscene_vals <= 1)
     )
     idxs = np.nonzero(mask)[0]
-    return [int(start + i * 4) for i in idxs]
+
+    # Diagnostic only -- costs nothing extra (same arrays, no new memory
+    # reads): how many addresses would pass this exact shape filter if
+    # random1/random2 weren't constrained to look like pointers at all.
+    # This exists to test a specific suspicion raised by the verify funnel:
+    # across dozens of consecutive polls during laps 1-2, literally zero
+    # candidates that reach the maxLap check ever have maxLap==3, then
+    # exactly one does the instant lock-on happens. That fits "the real
+    # object usually isn't even a raw hit" far better than "maxLap is
+    # genuinely not 3 yet" -- and random1/random2 are named like RNG state,
+    # not pointers, so requiring both to coincidentally land in the ~2% of
+    # address space that counts as valid MEM1/MEM2, on the same poll, would
+    # produce exactly this lottery-style delay. If this count dwarfs
+    # len(idxs), that confirms it; if it's close, this theory is wrong.
+    mask_no_random = (
+        (stage_vals <= 2)
+        & _in_valid_range(players_vals)
+        & (cds_vals <= 1)
+        & (cutscene_vals <= 1)
+    )
+    no_random_count = int(np.count_nonzero(mask_no_random))
+
+    return [int(start + i * 4) for i in idxs], no_random_count
 
 
 def scan_for_pointer_value(start: int, end: int, target_value: int):
@@ -497,21 +519,25 @@ def find_raceinfo_candidates():
     all of them, with diagnostics, beats silently trusting the first one.
 
     Also returns a breakdown of how long the scan took per region (second
-    element) and a funnel of how far raw hits got through verification,
-    aggregated across both regions (third element). Both exist to answer
-    the same live-testing mystery: lock-on has repeatedly taken until lap
-    3, with verify cost staying near zero (meaning essentially none of the
-    ~9700 raw hits per attempt reach even the first real check) for the
-    entire time before that -- the timing breakdown already ruled out "the
-    scan itself is slow" (consistently well under 1s), so the funnel is
-    here to show exactly which check is the actual bottleneck instead of
+    element), a funnel of how far raw hits got through verification,
+    aggregated across both regions (third element), and a count of how many
+    addresses would have been raw hits with no constraint on random1/random2
+    (fourth element). All exist to answer the same live-testing mystery:
+    lock-on has repeatedly taken until lap 3, with verify cost staying near
+    zero (meaning essentially none of the ~9700 raw hits per attempt reach
+    even the first real check) for the entire time before that -- the timing
+    breakdown already ruled out "the scan itself is slow" (consistently well
+    under 1s), the funnel narrowed it to "the real object usually isn't even
+    a raw hit", and the no-random count exists to confirm (or rule out)
     continuing to guess."""
     found = []
     timing = []
     counts = {}
+    no_random_total = 0
     for start, end in REGIONS:
         t_scan_start = time.time()
-        raw_hits = scan_region_for_raceinfo(start, end)
+        raw_hits, no_random_count = scan_region_for_raceinfo(start, end)
+        no_random_total += no_random_count
         t_scan_done = time.time()
         for addr in raw_hits:
             if verify_raceinfo_candidate(addr, counts):
@@ -520,20 +546,28 @@ def find_raceinfo_candidates():
         timing.append(
             (start, end, len(raw_hits), t_scan_done - t_scan_start, t_verify_done - t_scan_done)
         )
-    return found, timing, counts
+    return found, timing, counts, no_random_total
 
 
 def describe_candidate(addr: int) -> str:
     """One-line diagnostic dump of a Raceinfo candidate, for the terminal --
-    so a wrong lock is visible immediately instead of just silence."""
+    so a wrong lock is visible immediately instead of just silence. Includes
+    random1/random2's raw values -- added to directly inspect whether these
+    fields actually look like pointers (stable, in-range) or like arbitrary
+    RNG state, which is the live question behind the no-constraint raw-hit
+    count logged alongside the search funnel."""
     stage = read_ptr(addr + RACEINFO_OFF_STAGE)
+    random1 = read_ptr(addr + RACEINFO_OFF_RANDOM1)
+    random2 = read_ptr(addr + RACEINFO_OFF_RANDOM2)
     players_ptr = read_ptr(addr + RACEINFO_OFF_PLAYERS)
     player0_ptr = get_local_player_addr(addr)
     player = read_player(player0_ptr) if player0_ptr else None
     player_desc = f"pos={player[0]} lap={player[1]}/{player[2]} flags=0x{player[3]:X}" if player else "unreadable"
+    r1 = f"0x{random1:08X}" if random1 is not None else "?"
+    r2 = f"0x{random2:08X}" if random2 is not None else "?"
     return (
-        f"0x{addr:08X}: stage={stage}  players_ptr=0x{players_ptr:08X}  "
-        f"player0=0x{player0_ptr:08X}  ({player_desc})"
+        f"0x{addr:08X}: stage={stage}  random1={r1} random2={r2}  "
+        f"players_ptr=0x{players_ptr:08X}  player0=0x{player0_ptr:08X}  ({player_desc})"
     )
 
 
@@ -786,7 +820,7 @@ def main() -> None:
             # with hundreds of identical "looking" lines. Printing the last
             # scan's timing breakdown AND verify funnel alongside it -- see
             # find_raceinfo_candidates' docstring for why.
-            candidates, timing, counts = find_raceinfo_candidates()
+            candidates, timing, counts, no_random_total = find_raceinfo_candidates()
             if time.time() >= next_search_log:
                 breakdown = "; ".join(
                     f"0x{start:08X}-0x{end:08X}: {n_hits} raw hit(s), "
@@ -794,7 +828,11 @@ def main() -> None:
                     for start, end, n_hits, scan_s, verify_s in timing
                 )
                 funnel = ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "(nothing reached any check)"
-                print(f"Looking for Raceinfo... [{breakdown}]\n  funnel: {funnel}", flush=True)
+                print(
+                    f"Looking for Raceinfo... [{breakdown}]\n  funnel: {funnel}\n"
+                    f"  (would-be raw hits with no constraint on random1/random2: {no_random_total})",
+                    flush=True,
+                )
                 next_search_log = time.time() + 5.0
             if not candidates:
                 time.sleep(RESCAN_INTERVAL_S)
