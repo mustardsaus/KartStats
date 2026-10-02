@@ -474,13 +474,22 @@ def _raceinfo_still_plausible(addr: int) -> bool:
     from mkw-structures is about the game's real static sInstance -- what
     our structural scan actually finds is just whatever memory matches that
     shape, which could instead be a heap-allocated per-race object that
-    gets freed or zeroed out on a track/cup transition. If that happens,
-    re-reading it forever just returns stage=0 (zeroed memory reads as 0
-    too) and looks identical to "player hasn't started the next race yet"
-    -- there's no way to tell those apart from stage alone. Checking that
-    the players pointer still resolves into valid RAM catches the "this
-    struct is dead" case specifically, so we can give up and rescan instead
-    of waiting on it forever."""
+    gets freed or reused for something else entirely on a track/cup
+    transition.
+
+    Checks BOTH fields, not just one: live testing caught a case where the
+    players pointer field kept reading as a plausible in-range value (real
+    game memory is dense with valid-looking pointers almost anywhere, as
+    we've seen repeatedly) while `stage` itself had clearly become garbage
+    -- over two billion, nowhere near any legitimate value (0, 1, 2, or the
+    post-race value 4 we've now also seen) -- because the memory had been
+    reused by something else shaped differently. Checking only the pointer
+    field missed that entirely and the address was treated as still alive
+    forever. Requiring stage to also still be in a small, plausible range
+    catches that case too."""
+    stage = read_ptr(addr + RACEINFO_OFF_STAGE)
+    if stage is None or not (0 <= stage <= 10):
+        return False
     players_ptr = read_ptr(addr + RACEINFO_OFF_PLAYERS)
     return players_ptr is not None and (
         0x80000000 <= players_ptr < 0x81800000 or 0x90000000 <= players_ptr < 0x94000000
