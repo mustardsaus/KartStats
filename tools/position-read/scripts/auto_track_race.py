@@ -167,6 +167,23 @@ RESCAN_INTERVAL_S = 0.5     # how often to retry finding Raceinfo if not found y
 # over again automatically, so nothing breaks, it just gets slow again.
 SINSTANCE_ADDR = 0x809B8F70
 
+# Every real MKW GP/VS race is exactly 3 laps -- used for DISPLAY only. Live
+# testing (once the fast path removed the lap-3 lock-on delay and gave us
+# clean lap-1 data for the first time) showed maxLap does NOT hold steady
+# at a constant for the whole race despite its name: it read 1 during lap
+# 1, 2 during lap 2, 3 from lap 3 onward, even once currentLap ticked to 4
+# at the finish line -- it tracks something closer to "laps completed,
+# capped at the true total" than "the race's configured total laps". Real
+# finish detection already doesn't depend on it (STATE_FINISHING), so this
+# only fixes the printed denominator ("lap 1/1" -> "lap 1/3").
+STANDARD_LAP_COUNT = 3
+
+# MKW supports up to 12 racers (local + CPU + remote combined) in a single
+# race; players[] is sized for that when relevant. Used by read_all_players
+# below, the multiplayer slot-mapping diagnostic.
+MAX_PLAYER_SLOTS = 12
+PLAYER_DUMP_INTERVAL_S = 1.0
+
 
 def hook_with_retry(timeout_s: float = 30.0) -> None:
     print("Hooking into Dolphin...")
@@ -403,6 +420,41 @@ def read_player(player_addr: int):
         return pos, lap, maxlap, flags
     except Exception:
         return None
+
+
+def read_all_players(players_ptr: int, max_slots: int = MAX_PLAYER_SLOTS):
+    """Multiplayer slot-mapping diagnostic: reads every players[i] slot that
+    looks sane (pointer in range, id<=11 -- the same checks the single-
+    player path already trusts), and returns (slot_index, id, pos, lap,
+    maxlap, flags) for each one that does. Slot 0 is documented as "the
+    local player" for single-player, but there's no documented field that
+    says which slot(s) are local/human vs CPU in general -- player.h's
+    PlayerSub1c.bitfield4 has real/local/cpu/remote bits, but on a
+    different class (Player, not RaceinfoPlayer) with no documented link
+    between the two classes' indices. Rather than guess that mapping,
+    dumping every slot's raw state here lets it be read off empirically by
+    eye, in real time, while actually playing 2P split-screen: whichever
+    slot's position/lap visibly tracks player 1's on-screen play is player
+    1, same for player 2 -- no indexing assumption required."""
+    out = []
+    for i in range(max_slots):
+        player_ptr = read_ptr(players_ptr + i * POINTER_SIZE)
+        if player_ptr is None or not (
+            0x80000000 <= player_ptr < 0x81800000 or 0x90000000 <= player_ptr < 0x94000000
+        ):
+            continue
+        try:
+            player_id = dme.read_byte(player_ptr + PLAYER_OFF_ID)
+        except Exception:
+            continue
+        if player_id > 11:
+            continue
+        player = read_player(player_ptr)
+        if player is None:
+            continue
+        pos, lap, maxlap, flags = player
+        out.append((i, player_id, pos, lap, maxlap, flags))
+    return out
 
 
 def _bump(counts, key):
@@ -788,14 +840,19 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
     """Poll the local player's struct until the real finish flag
     (stateFlags & STATE_FINISHING) appears, Raceinfo.stage leaves 2 (race),
     or reads stop making sense entirely. Prints a line whenever position or
-    lap changes. Returns ((pos, lap, maxlap), reason)."""
+    lap changes (denominator shown is the constant STANDARD_LAP_COUNT, not
+    the live maxLap field -- see that constant's comment for why). Also
+    prints a full all-slots dump every PLAYER_DUMP_INTERVAL_S -- purely a
+    multiplayer slot-mapping diagnostic, see read_all_players. Returns
+    ((pos, lap, maxlap), reason)."""
     last = None
     stale = 0
+    next_dump = time.time()
 
     first = read_player(player_addr)
     if first is not None:
         pos, lap, maxlap, _flags = first
-        print(f"[race {race_num}] starting position: {pos}  (lap {lap}/{maxlap})", flush=True)
+        print(f"[race {race_num}] starting position: {pos}  (lap {lap}/{STANDARD_LAP_COUNT})", flush=True)
         last = first
 
     while True:
@@ -818,12 +875,22 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
             if pos != last[0]:
                 verb = "overtake -- now in" if pos < last[0] else "overtaken -- dropped to"
                 print(
-                    f"[race {race_num}] {verb} position {pos}  (was {last[0]}, lap {lap}/{maxlap})",
+                    f"[race {race_num}] {verb} position {pos}  (was {last[0]}, lap {lap}/{STANDARD_LAP_COUNT})",
                     flush=True,
                 )
             elif lap != last[1]:
-                print(f"[race {race_num}] lap {lap}/{maxlap}  (position {pos})", flush=True)
+                print(f"[race {race_num}] lap {lap}/{STANDARD_LAP_COUNT}  (position {pos})", flush=True)
         last = cur
+
+        if time.time() >= next_dump:
+            players_ptr = read_ptr(raceinfo_addr + RACEINFO_OFF_PLAYERS)
+            slots = read_all_players(players_ptr) if players_ptr else []
+            desc = " | ".join(
+                f"slot{i}(id={pid}): pos={p} lap={l}/{m} flags=0x{f:X}"
+                for i, pid, p, l, m, f in slots
+            )
+            print(f"[race {race_num}] all players -- {desc or '(none readable)'}", flush=True)
+            next_dump = time.time() + PLAYER_DUMP_INTERVAL_S
 
         if flags & STATE_FINISHING:
             return cur[:3], "finished"
@@ -987,10 +1054,10 @@ def main() -> None:
             print(f"[race {race_num}] lost it before getting a solid reading; resuming.\n", flush=True)
             continue
 
-        pos, lap, maxlap = result
+        pos, lap, _maxlap = result
         print(
             f"[race {race_num}] FINAL POSITION: {pos}  "
-            f"(lap {lap}/{maxlap}, {track or 'unknown track'}, ended via {reason})\n",
+            f"(lap {lap}/{STANDARD_LAP_COUNT}, {track or 'unknown track'}, ended via {reason})\n",
             flush=True,
         )
 
