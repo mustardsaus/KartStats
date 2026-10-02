@@ -238,6 +238,47 @@ def scan_region_for_raceinfo(start: int, end: int):
     return [int(start + i * 4) for i in idxs]
 
 
+def scan_for_pointer_value(start: int, end: int, target_value: int):
+    """Find every 4-byte-aligned address in [start, end) whose CURRENT
+    value equals target_value exactly -- a reverse pointer scan: "what, in
+    memory right now, points at this address". This is the mechanism for
+    finding Raceinfo::sInstance itself (the static pointer slot every
+    build of the game keeps, which never moves session to session) rather
+    than the Raceinfo object it points at (which is heap-allocated and
+    lands at a different address every session -- confirmed by live
+    testing: 5 different addresses across 5 runs so far).
+
+    An exact 32-bit equality match is a far sharper filter than our
+    Raceinfo struct scan's fuzzy multi-field shape match, so false
+    positives here should be rare. Still not guaranteed unique in one
+    pass (some other code might legitimately hold a cached copy of the
+    pointer too) -- see find_sinstance_candidates' intersection-across-
+    races approach for how that gets resolved."""
+    size = end - start
+    try:
+        buf = dme.read_bytes(start, size)
+    except Exception as exc:
+        print(f"  (couldn't read 0x{start:08X}-0x{end:08X}: {exc})")
+        return []
+    arr = np.frombuffer(buf, dtype=np.uint8)
+    n = len(arr) // 4
+    if n <= 0:
+        return []
+    vals = _read_u32_field(arr, 0, n)
+    idxs = np.nonzero(vals == target_value)[0]
+    return [int(start + i * 4) for i in idxs]
+
+
+def find_sinstance_candidates(target_value: int):
+    """Reverse-pointer-scans all of MEM1+MEM2 for the given confirmed-real
+    Raceinfo address. Returns every matching static/heap location --
+    callers narrow this down across multiple races (see main())."""
+    found = []
+    for start, end in REGIONS:
+        found.extend(scan_for_pointer_value(start, end, target_value))
+    return found
+
+
 def scan_region_for_racedata_settings(start: int, end: int):
     """One vectorized pass over [start, end) for 4-byte-aligned addresses
     that look like a RacedataSettings block (the course/cup/lap-count
@@ -327,99 +368,121 @@ def read_player(player_addr: int):
         return None
 
 
-def _raceinfo_snapshot(addr: int):
+def _bump(counts, key):
+    if counts is not None:
+        counts[key] = counts.get(key, 0) + 1
+
+
+def _raceinfo_snapshot(addr: int, counts=None):
     """Read every field this candidate needs to agree on, in one shot, so we
     can compare two snapshots taken slightly apart in time. Returns a tuple
-    or None if anything failed to read."""
+    or None if anything failed to read. `counts`, when given a dict, gets a
+    running tally of how far candidates make it through this funnel --
+    added to answer a live-testing mystery: lock-on consistently takes
+    until lap 3, with the verify step staying near-zero cost for over 100
+    seconds straight beforehand, meaning essentially none of the ~9700
+    raw hits per attempt reach even the first real check during that whole
+    stretch. This tally pinpoints exactly which check the real object is
+    failing (or whether it isn't even showing up as a raw hit at all)
+    during laps 1-2, instead of continuing to guess."""
     players_ptr = read_ptr(addr + RACEINFO_OFF_PLAYERS)
     if players_ptr is None or not (
         0x80000000 <= players_ptr < 0x81800000 or 0x90000000 <= players_ptr < 0x94000000
     ):
+        _bump(counts, "players_ptr_invalid")
         return None
+    _bump(counts, "players_ptr_ok")
 
     player0_ptr = read_ptr(players_ptr + PLAYER_SLOT_INDEX * POINTER_SIZE)
     if player0_ptr is None or not (
         0x80000000 <= player0_ptr < 0x81800000 or 0x90000000 <= player0_ptr < 0x94000000
     ):
+        _bump(counts, "player0_ptr_invalid")
         return None
+    _bump(counts, "player0_ptr_ok")
 
     try:
         player_id = dme.read_byte(player0_ptr + PLAYER_OFF_ID)
     except Exception:
+        _bump(counts, "player_id_unreadable")
         return None
     if player_id > 11:
+        _bump(counts, "player_id_too_high")
         return None
+    _bump(counts, "player_id_ok")
 
     player = read_player(player0_ptr)
     if player is None:
+        _bump(counts, "player_read_failed")
         return None
     pos, lap, maxlap, flags = player
+    _bump(counts, "reached_maxlap_check")
+    if maxlap != 3:
+        _bump(counts, "maxlap_not_3")
+        return None
+    _bump(counts, "maxlap_3")
+    if pos > 12:
+        _bump(counts, "pos_too_high")
+        return None
+    _bump(counts, "pos_ok")
+    if flags > 0xFF:
+        _bump(counts, "flags_too_high")
+        return None
+    _bump(counts, "flags_ok")
     return players_ptr, player0_ptr, maxlap, pos, flags
 
 
-def verify_raceinfo_candidate(addr: int) -> bool:
+def verify_raceinfo_candidate(addr: int, counts=None) -> bool:
     """Secondary, scalar check on a candidate that passed the vectorized
     pointer-shape filter: actually dereference players[] and confirm slot 0
-    looks like a real player struct, AND that the same answer holds up a
-    moment later.
+    looks like a real player struct (field-level checks -- maxLap==3,
+    pos<=12, flags<=0xFF -- all live in _raceinfo_snapshot now, so its
+    `counts` funnel covers them), AND that the same answer holds up a
+    moment later (the structural re-check unique to this function).
 
-    Two things turned out to matter a lot here, found by grepping a real
-    591-candidate false-positive run:
+    Things that turned out to matter a lot here, found by grepping real
+    false-positive runs:
 
     1. maxLap must be EXACTLY 3, not "0 or 3". Every real MKW GP/VS race is
        exactly 3 laps, so maxLap==0 looked like a harmless extra allowance
        for "caught before race settings applied" -- but 0 is also just
        ordinary zero bytes, which are everywhere in memory. Allowing it let
        a huge, totally unrelated, uniformly-spaced array of game objects
-       through (confirmed: every one of the 591 false positives had
-       maxLap in {0, something-not-3}, none had maxLap==3). Dropping the
-       "or 0" allowance means we simply won't find Raceinfo until a race's
-       settings are actually loaded, which is fine -- we rescan periodically
-       anyway (see RESCAN_INTERVAL_S), and this is the single highest-
-       leverage filter available.
+       through (confirmed: every one of 591 false positives had maxLap in
+       {0, something-not-3}, none had maxLap==3).
 
-    2. A single read isn't enough: one false positive in that same run had
-       a players[] pointer that, read again moments later, came back as
-       garbage (0x00000237) -- i.e. it was ephemeral/rapidly-reused memory
-       that happened to look right for one instant. Raceinfo is a real
-       singleton and should read identically a fraction of a second later.
-       Re-checking catches that kind of transient collision that a single
-       read can't distinguish from the real thing.
+    2. A single read isn't enough: one false positive had a players[]
+       pointer that, read again moments later, came back as garbage
+       (0x00000237) -- ephemeral/rapidly-reused memory that happened to
+       look right for one instant. Raceinfo is a real singleton and should
+       read identically a fraction of a second later.
 
     3. stateFlags must be small. Every legitimate reading seen in live
-       testing so far has been 0x0 (before the race starts) or 0x1
-       (STATE_IN_RACE, while actually racing) -- the documented bits
-       (STATE_IN_RACE/END_RACE_CAMERA/WRONG_WAY/DC/FINISHING/COMING_LAST_ANIM)
-       all fit in the low byte, so even several combined couldn't exceed
-       0x77. A false positive still got through the checks above with
-       flags=0x4D0000 -- nowhere near that range, and stuck permanently at
-       stage=0 instead of ever becoming a real race (not actually
-       Raceinfo, just something else shaped closely enough by coincidence
-       to pass the pointer/maxLap/stability checks). Rejecting anything
-       with high bits set catches this specific kind of false positive
-       before it ever gets a chance to hang the discovery loop.
+       testing has been 0x0 (before the race starts) or 0x1 (STATE_IN_RACE)
+       -- the documented bits all fit in the low byte. A false positive
+       still got through the checks above with flags=0x4D0000, stuck
+       permanently at stage=0.
     """
-    snap1 = _raceinfo_snapshot(addr)
+    snap1 = _raceinfo_snapshot(addr, counts)
     if snap1 is None:
         return False
     players_ptr1, player0_ptr1, maxlap1, pos1, flags1 = snap1
-    if maxlap1 != 3 or pos1 > 12 or flags1 > 0xFF:
-        return False
 
     time.sleep(0.4)
 
-    snap2 = _raceinfo_snapshot(addr)
+    snap2 = _raceinfo_snapshot(addr, counts)
     if snap2 is None:
+        _bump(counts, "snap2_failed")
         return False
     players_ptr2, player0_ptr2, maxlap2, pos2, flags2 = snap2
 
-    # The pointers and maxLap are structural -- they should be IDENTICAL a
-    # moment later for a real, stable singleton. Position is allowed to
-    # change (the race is live), but must still look sane.
+    # The pointers are structural -- they should be IDENTICAL a moment
+    # later for a real, stable singleton. Position is allowed to change
+    # (the race is live), but the snapshot already re-checked it's sane.
     if players_ptr1 != players_ptr2 or player0_ptr1 != player0_ptr2:
+        _bump(counts, "snap2_pointer_mismatch")
         return False
-    if maxlap2 != 3 or pos2 > 12 or flags2 > 0xFF:
-        return False
+    _bump(counts, "accepted")
     return True
 
 
@@ -433,30 +496,31 @@ def find_raceinfo_candidates():
     members in the right positions can coincidentally pass too). Returning
     all of them, with diagnostics, beats silently trusting the first one.
 
-    Also returns (as the second element) a breakdown of how long the scan
-    itself took, per region, plus how much of that was spent inside the
-    scalar verify step (which includes a deliberate 0.4s sleep per
-    snap1-passing raw hit -- see verify_raceinfo_candidate). Lock-on has
-    twice now taken 70-85s in live testing, landing right around lap 3
-    both times regardless of which race -- a suspiciously consistent
-    duration that points at the scan itself being slow (reading all of
-    MEM1+MEM2 through the Python bindings every attempt) rather than at
-    anything about when the real object becomes valid. This timing makes
-    that measurable instead of guessed at."""
+    Also returns a breakdown of how long the scan took per region (second
+    element) and a funnel of how far raw hits got through verification,
+    aggregated across both regions (third element). Both exist to answer
+    the same live-testing mystery: lock-on has repeatedly taken until lap
+    3, with verify cost staying near zero (meaning essentially none of the
+    ~9700 raw hits per attempt reach even the first real check) for the
+    entire time before that -- the timing breakdown already ruled out "the
+    scan itself is slow" (consistently well under 1s), so the funnel is
+    here to show exactly which check is the actual bottleneck instead of
+    continuing to guess."""
     found = []
     timing = []
+    counts = {}
     for start, end in REGIONS:
         t_scan_start = time.time()
         raw_hits = scan_region_for_raceinfo(start, end)
         t_scan_done = time.time()
         for addr in raw_hits:
-            if verify_raceinfo_candidate(addr):
+            if verify_raceinfo_candidate(addr, counts):
                 found.append(addr)
         t_verify_done = time.time()
         timing.append(
             (start, end, len(raw_hits), t_scan_done - t_scan_start, t_verify_done - t_scan_done)
         )
-    return found, timing
+    return found, timing, counts
 
 
 def describe_candidate(addr: int) -> str:
@@ -700,6 +764,14 @@ def main() -> None:
     raceinfo_addr = None
     race_num = 0
     next_search_log = 0.0
+    # Accumulates across races: candidate addresses of the permanent,
+    # never-moving Raceinfo::sInstance pointer slot (as opposed to the
+    # Raceinfo object itself, which is heap-allocated and lands at a
+    # different address every session). Each freshly-confirmed race gives
+    # a new, different real address to reverse-pointer-scan for; the
+    # intersection across races should converge on just the one true
+    # static slot. See find_sinstance_candidates().
+    sinstance_candidates = None
     while True:
         if not dme.is_hooked():
             print("Lost hook to Dolphin. Exiting.")
@@ -712,18 +784,17 @@ def main() -> None:
             # Logging that search itself only every 5s, not every retry, so
             # sitting in menus for a few minutes doesn't flood the terminal
             # with hundreds of identical "looking" lines. Printing the last
-            # scan's timing breakdown alongside it -- see find_raceinfo_candidates'
-            # docstring for why: lock-on has taken 70-85s twice in live
-            # testing and this measures exactly where that time goes
-            # instead of guessing.
-            candidates, timing = find_raceinfo_candidates()
+            # scan's timing breakdown AND verify funnel alongside it -- see
+            # find_raceinfo_candidates' docstring for why.
+            candidates, timing, counts = find_raceinfo_candidates()
             if time.time() >= next_search_log:
                 breakdown = "; ".join(
                     f"0x{start:08X}-0x{end:08X}: {n_hits} raw hit(s), "
                     f"scan {scan_s:.2f}s, verify {verify_s:.2f}s"
                     for start, end, n_hits, scan_s, verify_s in timing
                 )
-                print(f"Looking for Raceinfo... [{breakdown}]", flush=True)
+                funnel = ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "(nothing reached any check)"
+                print(f"Looking for Raceinfo... [{breakdown}]\n  funnel: {funnel}", flush=True)
                 next_search_log = time.time() + 5.0
             if not candidates:
                 time.sleep(RESCAN_INTERVAL_S)
@@ -760,6 +831,39 @@ def main() -> None:
             raceinfo_addr = found_addr
             player_addr = found_player_addr
             print(f"Confirmed -- 0x{raceinfo_addr:08X} reached stage 2 with a real player read.\n", flush=True)
+
+            # Free bonus data point toward finding the PERMANENT sInstance
+            # pointer slot (see the comment above sinstance_candidates):
+            # reverse-pointer-scan for whoever currently holds this
+            # freshly-confirmed real address, and intersect with any
+            # earlier races' results. Converging to one address here would
+            # mean this scanning dance never has to happen again -- that
+            # one fixed address could just be hardcoded for instant,
+            # 100%-reliable lock-on in every future session.
+            this_scan = set(find_sinstance_candidates(raceinfo_addr))
+            if sinstance_candidates is None:
+                sinstance_candidates = this_scan
+            else:
+                sinstance_candidates &= this_scan
+            if not sinstance_candidates:
+                print(
+                    "sInstance pointer-scan: no candidates survived across races so far "
+                    "(either none existed this race, or the real slot isn't in MEM1/MEM2 "
+                    "in a form we're matching -- not fatal, just means no shortcut yet).\n",
+                    flush=True,
+                )
+            else:
+                addrs = ", ".join(f"0x{a:08X}" for a in sorted(sinstance_candidates))
+                if len(sinstance_candidates) == 1:
+                    print(
+                        f"sInstance pointer-scan: converged on a single candidate -- {addrs}. "
+                        "This should be the SAME address every session for this exact game "
+                        "build/region. If it keeps holding up across more races, this is a "
+                        "strong hardcode candidate to skip scanning entirely next time.\n",
+                        flush=True,
+                    )
+                else:
+                    print(f"sInstance pointer-scan: still narrowing -- {addrs}\n", flush=True)
         else:
             player_addr = wait_for_race_start(raceinfo_addr, timeout_s=9e9)
             if player_addr is None:
