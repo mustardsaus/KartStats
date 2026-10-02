@@ -2,25 +2,40 @@
 Autonomous race-position tracker.
 
 Unlike probe_position.py, this doesn't need a confirmed Raceinfo::sInstance
-address and doesn't need anyone to say "race started" / "race ended". It
-finds the live player struct itself by scanning Dolphin's emulated RAM for
-bytes that look like a real (position, currentLap, maxLap) triple -- see
-RaceinfoPlayer in https://github.com/SeekyCt/mkw-structures (raceinfo.h) --
-then confirms the match over a few quick re-checks (a real struct's maxLap
-never changes mid-race and its lap never goes backwards, and something
-about it -- position or lap -- actually has to move; a coincidental match
-on static memory never does). Once locked on, it polls that address until
-the struct stops looking valid (torn down between races, or lap counter
-ticks past maxLap -- MKW's finish-line tell) and prints the last position
-it saw as that race's final result. It also remembers that address and
-tries it again first on the next race before doing a full rescan, since
-MKW's allocator tends to reuse the same struct slot race after race; full
-rescans are the fallback, not the steady state. Then it goes back to
-watching for the next race. Repeat forever.
+address and doesn't need anyone to say "race started" / "race ended".
+
+Earlier versions of this script tried to find "the" live player struct by
+scanning for a single address whose (position, currentLap, maxLap) looked
+plausible, then confirming it by watching it change. That approach had a
+fatal flaw live testing exposed: in a race with up to 12 racers, every
+single racer -- you and every CPU -- has an identical-looking struct with
+equally valid position/lap/maxLap values. There is no way to tell your own
+struct apart from a CPU's by its values alone, so a "looks plausible and
+changes" scan can just as easily lock onto an opponent, and whichever one
+it grabs will occasionally sit still for a few seconds (stuck on a wall,
+hit by an item) and get mistaken for the race having ended.
+
+This version finds the actual Raceinfo.players[] *array* instead of
+guessing at one struct: every racer's struct sits in memory as one block,
+back to back at a constant stride. That pattern of N evenly-spaced,
+simultaneously-plausible addresses is essentially impossible for unrelated
+memory to produce by coincidence, so once found, it's a high-confidence
+structural match rather than a numeric guess -- and the first (lowest
+address) slot in that array is the local player, so there's no more
+racer-selection ambiguity. See find_player_array() below.
+
+Once locked on, it polls that address until the struct stops looking valid
+(torn down between races, or lap counter ticks past maxLap -- MKW's
+finish-line tell) and prints the last position it saw as that race's final
+result. It also remembers that address and tries it again first on the
+next race before doing a full rescan, since MKW's allocator tends to reuse
+the same array location race after race; full rescans are the fallback,
+not the steady state. Then it goes back to watching for the next race.
+Repeat forever.
 
 This sidesteps the whole "find the NTSC-U sInstance address" problem from
 probe_position.py / README.md Step 1 -- we never need the static pointer,
-only the live struct, which this finds fresh every race.
+only the live array, which this finds fresh every race.
 
 IMPORTANT -- this must run with your Mac's own, native Python, not through
 any sandboxed/remote shell: it talks directly to Dolphin's real process
@@ -78,12 +93,21 @@ POSITION_MIN, POSITION_MAX = 1, 12   # 1st..12th (max racers in a MKW race)
 # in this whole script.
 MAXLAP_MIN, MAXLAP_MAX = 3, 3
 
-NARROW_ROUNDS = 5
-NARROW_INTERVAL_S = 1.2
 POLL_INTERVAL_S = 0.3
 STALE_READS_TO_GIVE_UP = 4  # ~1.2s of bad reads = struct's gone
-FROZEN_POLLS_TO_FINISH = 10  # ~3s of a completely unchanged reading on the last lap
+FROZEN_POLLS_TO_FINISH = 15  # ~4.5s of a completely unchanged reading on the last lap
 RELOCK_TIMEOUT_S = 8.0  # how long to wait on a previously-seen address before falling back to a full rescan
+
+# players[] array detection: how many evenly-spaced plausible structs in a
+# row counts as "this has to be the real array, not coincidence", and the
+# plausible range for sizeof(RaceinfoPlayer) (the stride between them).
+# RaceinfoPlayer is certainly bigger than the 0x28 bytes we actually touch,
+# and almost certainly nowhere near 16KB; these bounds are deliberately
+# loose, they just rule out degenerate matches.
+PLAYER_ARRAY_MIN_RUN = 4
+PLAYER_ARRAY_STRIDE_MIN = 0x40
+PLAYER_ARRAY_STRIDE_MAX = 0x4000
+PLAYER_SLOT_INDEX = 0  # array index 0 is the local player in single-player
 
 
 def hook_with_retry(timeout_s: float = 30.0) -> None:
@@ -165,60 +189,48 @@ def read_one(addr: int):
         return None
 
 
-def find_live_struct():
-    """Scan, then narrow across a few re-checks, keeping only candidates
-    whose maxLap never changes and whose lap never goes backwards, then
-    require the lap to have actually ticked forward at least once before
-    locking on. Returns a locked address, or None if nothing both survived
-    the narrowing and demonstrably moved (so the caller should just rescan
-    rather than lock onto a static, coincidentally-plausible address)."""
+def find_player_array():
+    """Find the real Raceinfo.players[] array by its structure rather than
+    guessing at a single address: scan for every plausible (position,
+    currentLap, maxLap) triple, then look for the longest run of candidate
+    addresses evenly spaced at a constant stride. A handful of racers' real
+    structs sitting back to back produce exactly that pattern; scattered
+    unrelated memory essentially never does by chance. Returns the lowest
+    address in the longest qualifying run (array slot 0 = local player), or
+    None if nothing found this pass qualifies (so the caller should just
+    rescan rather than lock onto noise)."""
     candidates = scan_all_regions()
-    if not candidates:
+    if len(candidates) < PLAYER_ARRAY_MIN_RUN:
         return None
 
-    history = {addr: [vals] for addr, vals in candidates.items()}
-    for _ in range(NARROW_ROUNDS):
-        time.sleep(NARROW_INTERVAL_S)
-        survivors = {}
-        for addr, hist in history.items():
-            cur = read_one(addr)
-            if cur is None:
-                continue
-            pos, lap, maxlap = cur
-            first_maxlap = hist[0][2]
-            last_lap = hist[-1][1]
+    addrs = sorted(candidates.keys())
+    best_run = []
+    cur_run = [addrs[0]]
+    cur_stride = None
+    for k in range(1, len(addrs)):
+        d = addrs[k] - addrs[k - 1]
+        if cur_stride is None or d == cur_stride:
+            cur_stride = d
+            cur_run.append(addrs[k])
+        else:
             if (
-                POSITION_MIN <= pos <= POSITION_MAX
-                and maxlap == first_maxlap
-                and lap >= last_lap
-                and lap <= maxlap + 1
+                PLAYER_ARRAY_STRIDE_MIN <= cur_stride <= PLAYER_ARRAY_STRIDE_MAX
+                and len(cur_run) > len(best_run)
             ):
-                survivors[addr] = hist + [cur]
-        history = survivors
-        if not history:
-            return None
-        if len(history) == 1:
-            break
+                best_run = cur_run
+            cur_run = [addrs[k - 1], addrs[k]]
+            cur_stride = d
+    if (
+        cur_stride is not None
+        and PLAYER_ARRAY_STRIDE_MIN <= cur_stride <= PLAYER_ARRAY_STRIDE_MAX
+        and len(cur_run) > len(best_run)
+    ):
+        best_run = cur_run
 
-    if not history:
+    if len(best_run) < PLAYER_ARRAY_MIN_RUN:
         return None
-    # Require *something* to have actually moved -- a static, coincidentally
-    # plausible address (unrelated memory that happens to read as a
-    # valid-looking triple) trivially survives the "non-decreasing lap,
-    # unchanged maxLap" checks above by never changing at all. Real race
-    # state moves. Lap only ticks over once every 20-90s, far longer than
-    # this narrowing window, so require it OR a position change instead --
-    # position swaps happen constantly mid-race (overtakes) and almost never
-    # for truly static memory. If nothing moved yet, don't guess -- return
-    # None so the caller rescans rather than locking onto noise.
-    def moved(hist):
-        first_pos = hist[0][0]
-        if any(v[0] != first_pos for v in hist[1:]):
-            return True
-        return hist[-1][1] > hist[0][1]
-
-    moving = [a for a, h in history.items() if moved(h)]
-    return moving[0] if moving else None
+    idx = PLAYER_SLOT_INDEX if PLAYER_SLOT_INDEX < len(best_run) else 0
+    return best_run[idx]
 
 
 def wait_for_fresh_race_at(addr: int, timeout_s: float = RELOCK_TIMEOUT_S):
@@ -326,7 +338,7 @@ def main() -> None:
         if last_addr is not None:
             addr = wait_for_fresh_race_at(last_addr)
         if addr is None:
-            addr = find_live_struct()
+            addr = find_player_array()
         if addr is None:
             time.sleep(1.0)
             continue
