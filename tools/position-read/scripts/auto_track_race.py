@@ -427,8 +427,15 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
         stale = 0
 
         pos, lap, maxlap, flags = cur
-        if last is not None and (pos != last[0] or lap != last[1]):
-            print(f"[race {race_num}] position: {pos}  (lap {lap}/{maxlap})", flush=True)
+        if last is not None:
+            if pos != last[0]:
+                verb = "overtake -- now in" if pos < last[0] else "overtaken -- dropped to"
+                print(
+                    f"[race {race_num}] {verb} position {pos}  (was {last[0]}, lap {lap}/{maxlap})",
+                    flush=True,
+                )
+            elif lap != last[1]:
+                print(f"[race {race_num}] lap {lap}/{maxlap}  (position {pos})", flush=True)
         last = cur
 
         if flags & STATE_FINISHING:
