@@ -7,12 +7,16 @@ finds the live player struct itself by scanning Dolphin's emulated RAM for
 bytes that look like a real (position, currentLap, maxLap) triple -- see
 RaceinfoPlayer in https://github.com/SeekyCt/mkw-structures (raceinfo.h) --
 then confirms the match over a few quick re-checks (a real struct's maxLap
-never changes mid-race and its lap never goes backwards; a coincidental
-match usually fails one of those within a second or two). Once locked on,
-it polls that address until the struct stops looking valid (torn down
-between races, or lap counter ticks past maxLap -- MKW's finish-line tell)
-and prints the last position it saw as that race's final result. Then it
-goes back to scanning for the next race. Repeat forever.
+never changes mid-race and its lap never goes backwards, and something
+about it -- position or lap -- actually has to move; a coincidental match
+on static memory never does). Once locked on, it polls that address until
+the struct stops looking valid (torn down between races, or lap counter
+ticks past maxLap -- MKW's finish-line tell) and prints the last position
+it saw as that race's final result. It also remembers that address and
+tries it again first on the next race before doing a full rescan, since
+MKW's allocator tends to reuse the same struct slot race after race; full
+rescans are the fallback, not the steady state. Then it goes back to
+watching for the next race. Repeat forever.
 
 This sidesteps the whole "find the NTSC-U sInstance address" problem from
 probe_position.py / README.md Step 1 -- we never need the static pointer,
@@ -74,6 +78,7 @@ NARROW_INTERVAL_S = 1.2
 POLL_INTERVAL_S = 0.3
 STALE_READS_TO_GIVE_UP = 4  # ~1.2s of bad reads = struct's gone
 FROZEN_POLLS_TO_FINISH = 10  # ~3s of a completely unchanged reading on the last lap
+RELOCK_TIMEOUT_S = 8.0  # how long to wait on a previously-seen address before falling back to a full rescan
 
 
 def hook_with_retry(timeout_s: float = 30.0) -> None:
@@ -192,15 +197,43 @@ def find_live_struct():
 
     if not history:
         return None
-    # Require the lap to have actually advanced at some point -- a static,
-    # coincidentally-plausible address (unrelated memory that happens to
-    # read as a valid-looking triple) trivially survives the "non-decreasing,
-    # maxLap unchanged" checks above by never changing at all. Real race
-    # state moves; only lock onto something that demonstrably did. If
-    # nothing moved yet, don't guess -- report "not found this round" so
-    # the caller rescans rather than locking onto noise.
-    moving = [a for a, h in history.items() if h[-1][1] > h[0][1]]
+    # Require *something* to have actually moved -- a static, coincidentally
+    # plausible address (unrelated memory that happens to read as a
+    # valid-looking triple) trivially survives the "non-decreasing lap,
+    # unchanged maxLap" checks above by never changing at all. Real race
+    # state moves. Lap only ticks over once every 20-90s, far longer than
+    # this narrowing window, so require it OR a position change instead --
+    # position swaps happen constantly mid-race (overtakes) and almost never
+    # for truly static memory. If nothing moved yet, don't guess -- return
+    # None so the caller rescans rather than locking onto noise.
+    def moved(hist):
+        first_pos = hist[0][0]
+        if any(v[0] != first_pos for v in hist[1:]):
+            return True
+        return hist[-1][1] > hist[0][1]
+
+    moving = [a for a, h in history.items() if moved(h)]
     return moving[0] if moving else None
+
+
+def wait_for_fresh_race_at(addr: int, timeout_s: float = RELOCK_TIMEOUT_S):
+    """Watch a previously-confirmed address, waiting for it to look like the
+    *start* of a new race (a valid reading with a low lap count). MKW's
+    allocator reliably reuses the same struct slot race after race -- the
+    live run that found this approach locked onto addresses 0x811194E0 and
+    0x81117F6C on two different races, less than 0x2000 apart -- so this
+    almost always beats a full rescan, and it has a nice side effect: it
+    naturally waits for the actual start of the race instead of locking on
+    mid-race or onto a stale frozen reading left over from the last one."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        cur = read_one(addr)
+        if cur is not None:
+            pos, lap, maxlap = cur
+            if POSITION_MIN <= pos <= POSITION_MAX and MAXLAP_MIN <= maxlap <= MAXLAP_MAX and lap <= 1:
+                return addr
+        time.sleep(POLL_INTERVAL_S)
+    return None
 
 
 def track_until_race_ends(addr: int, race_num: int):
@@ -278,23 +311,30 @@ def main() -> None:
         "as soon as it's over. Ctrl+C to stop.\n"
     )
     race_num = 0
+    last_addr = None
     while True:
         if not dme.is_hooked():
             print("Lost hook to Dolphin. Exiting.")
             return
 
-        addr = find_live_struct()
+        addr = None
+        if last_addr is not None:
+            addr = wait_for_fresh_race_at(last_addr)
+        if addr is None:
+            addr = find_live_struct()
         if addr is None:
             time.sleep(1.0)
             continue
 
         race_num += 1
-        print(f"[race {race_num}] locked onto 0x{addr:08X} -- tracking...", flush=True)
+        how = "same slot as last race" if addr == last_addr else "fresh scan"
+        print(f"[race {race_num}] locked onto 0x{addr:08X} ({how}) -- tracking...", flush=True)
         result, reason = track_until_race_ends(addr, race_num)
         if result is None:
             print(f"[race {race_num}] lost it before getting a solid reading; resuming scan.\n", flush=True)
             continue
 
+        last_addr = addr
         pos, lap, maxlap = result
         print(
             f"[race {race_num}] FINAL POSITION: {pos}  "
