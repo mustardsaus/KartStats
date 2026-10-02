@@ -67,7 +67,7 @@ REGIONS = [
 ]
 
 POSITION_MIN, POSITION_MAX = 1, 12   # 1st..12th (max racers in a MKW race)
-MAXLAP_MIN, MAXLAP_MAX = 1, 9        # almost always 3; generous on purpose
+MAXLAP_MIN, MAXLAP_MAX = 2, 9        # real races are 3 laps; a "1-lap race" is never real, just noise
 
 NARROW_ROUNDS = 5
 NARROW_INTERVAL_S = 1.2
@@ -157,9 +157,11 @@ def read_one(addr: int):
 
 def find_live_struct():
     """Scan, then narrow across a few re-checks, keeping only candidates
-    whose maxLap never changes and whose lap never goes backwards -- a real
-    struct behaves like that; a coincidental match almost never does for
-    more than a round. Returns a locked address, or None."""
+    whose maxLap never changes and whose lap never goes backwards, then
+    require the lap to have actually ticked forward at least once before
+    locking on. Returns a locked address, or None if nothing both survived
+    the narrowing and demonstrably moved (so the caller should just rescan
+    rather than lock onto a static, coincidentally-plausible address)."""
     candidates = scan_all_regions()
     if not candidates:
         return None
@@ -190,10 +192,15 @@ def find_live_struct():
 
     if not history:
         return None
-    # Prefer a candidate whose lap actually advanced -- strong evidence
-    # it's live game state, not a static coincidence.
+    # Require the lap to have actually advanced at some point -- a static,
+    # coincidentally-plausible address (unrelated memory that happens to
+    # read as a valid-looking triple) trivially survives the "non-decreasing,
+    # maxLap unchanged" checks above by never changing at all. Real race
+    # state moves; only lock onto something that demonstrably did. If
+    # nothing moved yet, don't guess -- report "not found this round" so
+    # the caller rescans rather than locking onto noise.
     moving = [a for a, h in history.items() if h[-1][1] > h[0][1]]
-    return moving[0] if moving else next(iter(history))
+    return moving[0] if moving else None
 
 
 def track_until_race_ends(addr: int, race_num: int):
