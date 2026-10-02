@@ -330,14 +330,39 @@ def get_local_player_addr(raceinfo_addr: int):
     return read_ptr(players_ptr + PLAYER_SLOT_INDEX * POINTER_SIZE)
 
 
+def _raceinfo_still_plausible(addr: int) -> bool:
+    """Cheap recurring liveness check used while waiting *between* races
+    (when we're reusing an address found for an earlier race rather than
+    doing a fresh scan). The "Raceinfo is a permanent singleton" assumption
+    from mkw-structures is about the game's real static sInstance -- what
+    our structural scan actually finds is just whatever memory matches that
+    shape, which could instead be a heap-allocated per-race object that
+    gets freed or zeroed out on a track/cup transition. If that happens,
+    re-reading it forever just returns stage=0 (zeroed memory reads as 0
+    too) and looks identical to "player hasn't started the next race yet"
+    -- there's no way to tell those apart from stage alone. Checking that
+    the players pointer still resolves into valid RAM catches the "this
+    struct is dead" case specifically, so we can give up and rescan instead
+    of waiting on it forever."""
+    players_ptr = read_ptr(addr + RACEINFO_OFF_PLAYERS)
+    return players_ptr is not None and (
+        0x80000000 <= players_ptr < 0x81800000 or 0x90000000 <= players_ptr < 0x94000000
+    )
+
+
 def wait_for_race_start(raceinfo_addr: int, timeout_s: float, status_every_s: float = 3.0):
     """Wait up to timeout_s for Raceinfo.stage == 2 (actually racing, not
     the intro camera or countdown) with a sane player read. Prints the
     current stage every status_every_s so a wrong lock (stage stuck, or
     nonsense) is visible on the terminal instead of looking identical to
-    "just waiting for you to start a race". Returns the player address, or
-    None on timeout / hook loss / a stage-2 reading that never yields a
-    sane player (pointer chain shifted -- a new Dolphin session)."""
+    "just waiting for you to start a race". On that same cadence, also
+    re-checks that the candidate still structurally looks like Raceinfo
+    (see _raceinfo_still_plausible) and bails out early if it doesn't --
+    otherwise a struct that died between races would look exactly like
+    "stage stuck at 0, still waiting for the next race" forever. Returns
+    the player address, or None on timeout / hook loss / a dead struct /
+    a stage-2 reading that never yields a sane player (pointer chain
+    shifted -- a new Dolphin session)."""
     deadline = time.time() + timeout_s
     next_status = time.time()
     stale = 0
@@ -349,6 +374,13 @@ def wait_for_race_start(raceinfo_addr: int, timeout_s: float, status_every_s: fl
         if time.time() >= next_status:
             print(f"  (0x{raceinfo_addr:08X}: stage={stage})", flush=True)
             next_status = time.time() + status_every_s
+            if stage != 2 and not _raceinfo_still_plausible(raceinfo_addr):
+                print(
+                    f"  (0x{raceinfo_addr:08X} no longer looks like Raceinfo -- "
+                    "it likely didn't survive the track/cup transition; rescanning)",
+                    flush=True,
+                )
+                return None
 
         if stage == 2:
             player_addr = get_local_player_addr(raceinfo_addr)
