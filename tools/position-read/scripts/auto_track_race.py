@@ -515,6 +515,63 @@ def wait_for_race_start(raceinfo_addr: int, timeout_s: float, status_every_s: fl
     return None
 
 
+def wait_for_any_race_start(candidates, timeout_s: float, status_every_s: float = 3.0):
+    """Like wait_for_race_start, but watches every still-plausible candidate
+    on every poll tick, instead of giving each one its own serial timeout
+    window one at a time.
+
+    Found via live testing: even after the strict maxLap==3 filter, a
+    handful of already-verified look-alikes can still coexist with the
+    real Raceinfo (the structural filter is strong but not perfect against
+    real, noisy game memory -- see verify_raceinfo_candidate's docstring).
+    Trying them one at a time for up to 15s each meant the real one didn't
+    get its turn until every candidate ahead of it in the list had each
+    burned their full window -- with enough residual look-alikes, that ate
+    up multiple laps of real race time before ever locking on, every
+    single race (since the underlying object doesn't survive between
+    races -- see _raceinfo_still_plausible -- a fresh batch of candidates,
+    in a possibly different order, shows up every time).
+
+    Checking every candidate on every tick removes that multiplier
+    entirely: lock-on time is bounded by how fast the real race actually
+    reaches stage 2, not by how many look-alikes happen to rank ahead of
+    it. Returns (raceinfo_addr, player_addr), or (None, None) on timeout /
+    hook loss / every candidate going implausible."""
+    deadline = time.time() + timeout_s
+    next_status = time.time()
+    stale = {addr: 0 for addr in candidates}  # addr -> consecutive bad-player-read count
+    while time.time() < deadline:
+        if not dme.is_hooked():
+            return None, None
+
+        show_status = time.time() >= next_status
+        if show_status:
+            next_status = time.time() + status_every_s
+
+        for addr in list(stale.keys()):
+            stage = read_ptr(addr + RACEINFO_OFF_STAGE)
+            if show_status:
+                print(f"  (0x{addr:08X}: stage={stage})", flush=True)
+
+            if stage == 2:
+                player_addr = get_local_player_addr(addr)
+                cur = read_player(player_addr) if player_addr else None
+                if cur is not None:
+                    return addr, player_addr
+                stale[addr] += 1
+                if stale[addr] >= STALE_READS_TO_GIVE_UP:
+                    del stale[addr]
+            elif stage is None or not _raceinfo_still_plausible(addr):
+                del stale[addr]
+            else:
+                stale[addr] = 0
+
+        if not stale:
+            return None, None
+        time.sleep(POLL_INTERVAL_S)
+    return None, None
+
+
 def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
     """Poll the local player's struct until the real finish flag
     (stateFlags & STATE_FINISHING) appears, Raceinfo.stage leaves 2 (race),
@@ -602,27 +659,21 @@ def main() -> None:
             # The structural filter is far more selective against random
             # noise than against real, densely-pointer-filled game memory
             # (practically every real pointer in the process IS in-range by
-            # construction), so more than one candidate can pass. Try each
-            # for a bounded window and keep whichever one actually reaches
-            # stage 2 with a sane player read -- if none do, these were all
-            # false positives (or no race has started yet) and we rescan.
-            per_candidate_timeout = 15.0 if len(candidates) > 1 else 9e9
-            found_player_addr = None
-            for addr in candidates:
-                print(f"Trying 0x{addr:08X}...", flush=True)
-                player_addr = wait_for_race_start(addr, timeout_s=per_candidate_timeout)
-                if player_addr is not None:
-                    raceinfo_addr = addr
-                    found_player_addr = player_addr
-                    print(f"Confirmed -- 0x{addr:08X} reached stage 2 with a real player read.\n", flush=True)
-                    break
-                if not dme.is_hooked():
-                    return
-
+            # construction), so more than one candidate can pass. Watch all
+            # of them at once (see wait_for_any_race_start) rather than
+            # trying each for its own timeout window in sequence -- that
+            # way, whichever one is real gets confirmed as soon as the race
+            # itself starts, regardless of how many look-alikes are ahead
+            # of it in the list.
+            found_addr, found_player_addr = wait_for_any_race_start(candidates, timeout_s=9e9)
+            if not dme.is_hooked():
+                return
             if found_player_addr is None:
-                print("None of these reached a real race within the wait window; rescanning.\n", flush=True)
+                print("None of these reached a real race; rescanning.\n", flush=True)
                 continue
+            raceinfo_addr = found_addr
             player_addr = found_player_addr
+            print(f"Confirmed -- 0x{raceinfo_addr:08X} reached stage 2 with a real player read.\n", flush=True)
         else:
             player_addr = wait_for_race_start(raceinfo_addr, timeout_s=9e9)
             if player_addr is None:
