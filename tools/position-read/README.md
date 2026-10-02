@@ -65,16 +65,27 @@ directly by you.
 ## Autonomous tracking (no manual scanning, no region address needed)
 
 `scripts/auto_track_race.py` supersedes the manual Cheat-Engine-style
-scanning in Step 1 below for actually playing. Instead of you (or me,
-driving the GUI) catching an exact value under time pressure, the script
-scans Dolphin's RAM itself for bytes that look like a real
-`(position, currentLap, maxLap)` triple, confirms the match over a couple
-of quick re-checks (a real struct's `maxLap` never changes mid-race, its
-lap never goes backwards — a coincidental match almost always fails that
-within a second or two), then polls it until the race ends and prints the
-final position. No manual "race started" / "race ended" signal needed,
-and no confirmed `Raceinfo::sInstance` address either — it finds the live
-struct fresh every race instead of walking a static pointer to it.
+scanning in Step 1 below for actually playing. Several earlier versions of
+this script tried to find "a live player struct" by scanning for numbers
+that merely looked plausible — that approach went through a lot of live
+debugging and kept finding new ways to be wrong (up to 12 racers look
+identical in memory, so it could lock onto a CPU opponent; "race over" was
+only ever a guess from the lap counter, never an actual flag).
+
+The current version instead uses the real fields raceinfo.h documents:
+`Raceinfo` (the *one* global race-state object, not a per-racer struct) has
+a `stage` field — 0 = intro camera, 1 = countdown, 2 = race — and each
+`RaceinfoPlayer` has a `stateFlags` bitfield where bit `0x20` means
+"finishing the race". That's a real finish signal, not an inference from
+the lap counter. Because `Raceinfo` is a singleton, it can be found with a
+far stricter fingerprint than any player struct (several pointer fields
+that must all independently resolve into valid RAM at once) and only has
+to be found **once per Dolphin session** — after that it's a plain pointer
+chase (`Raceinfo → players[0] → position/stateFlags`), the same design
+`probe_position.py` always intended, just with the real address found
+automatically instead of guessed. No manual "race started"/"race ended"
+signal needed, and no confirmed `Raceinfo::sInstance` address needed either
+— the script finds it itself on first run.
 
 **This must run with your Mac's own, native Python** — it attaches to
 Dolphin's actual process memory, which only works from something really
