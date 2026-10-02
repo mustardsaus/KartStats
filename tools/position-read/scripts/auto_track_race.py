@@ -209,38 +209,87 @@ def read_player(player_addr: int):
         return None
 
 
-def verify_raceinfo_candidate(addr: int) -> bool:
-    """Secondary, scalar check on a candidate that passed the vectorized
-    pointer-shape filter: actually dereference players[] and confirm slot 0
-    looks like a real player struct (small id, sane maxLap). Cheap since
-    there should only be a handful of candidates to check this way."""
+def _raceinfo_snapshot(addr: int):
+    """Read every field this candidate needs to agree on, in one shot, so we
+    can compare two snapshots taken slightly apart in time. Returns a tuple
+    or None if anything failed to read."""
     players_ptr = read_ptr(addr + RACEINFO_OFF_PLAYERS)
     if players_ptr is None or not (
         0x80000000 <= players_ptr < 0x81800000 or 0x90000000 <= players_ptr < 0x94000000
     ):
-        return False
+        return None
 
     player0_ptr = read_ptr(players_ptr + PLAYER_SLOT_INDEX * POINTER_SIZE)
     if player0_ptr is None or not (
         0x80000000 <= player0_ptr < 0x81800000 or 0x90000000 <= player0_ptr < 0x94000000
     ):
-        return False
+        return None
 
     try:
         player_id = dme.read_byte(player0_ptr + PLAYER_OFF_ID)
     except Exception:
-        return False
+        return None
     if player_id > 11:
-        return False
+        return None
 
     player = read_player(player0_ptr)
     if player is None:
-        return False
+        return None
     pos, lap, maxlap, flags = player
-    # maxLap is 0 before a race's settings are applied yet, or 3 (every real
-    # MKW GP/VS race) once they are -- either is consistent with this really
-    # being Raceinfo, just possibly caught before a race has started.
-    return maxlap in (0, 3) and pos <= 12
+    return players_ptr, player0_ptr, maxlap, pos
+
+
+def verify_raceinfo_candidate(addr: int) -> bool:
+    """Secondary, scalar check on a candidate that passed the vectorized
+    pointer-shape filter: actually dereference players[] and confirm slot 0
+    looks like a real player struct, AND that the same answer holds up a
+    moment later.
+
+    Two things turned out to matter a lot here, found by grepping a real
+    591-candidate false-positive run:
+
+    1. maxLap must be EXACTLY 3, not "0 or 3". Every real MKW GP/VS race is
+       exactly 3 laps, so maxLap==0 looked like a harmless extra allowance
+       for "caught before race settings applied" -- but 0 is also just
+       ordinary zero bytes, which are everywhere in memory. Allowing it let
+       a huge, totally unrelated, uniformly-spaced array of game objects
+       through (confirmed: every one of the 591 false positives had
+       maxLap in {0, something-not-3}, none had maxLap==3). Dropping the
+       "or 0" allowance means we simply won't find Raceinfo until a race's
+       settings are actually loaded, which is fine -- we rescan periodically
+       anyway (see RESCAN_INTERVAL_S), and this is the single highest-
+       leverage filter available.
+
+    2. A single read isn't enough: one false positive in that same run had
+       a players[] pointer that, read again moments later, came back as
+       garbage (0x00000237) -- i.e. it was ephemeral/rapidly-reused memory
+       that happened to look right for one instant. Raceinfo is a real
+       singleton and should read identically a fraction of a second later.
+       Re-checking catches that kind of transient collision that a single
+       read can't distinguish from the real thing.
+    """
+    snap1 = _raceinfo_snapshot(addr)
+    if snap1 is None:
+        return False
+    players_ptr1, player0_ptr1, maxlap1, pos1 = snap1
+    if maxlap1 != 3 or pos1 > 12:
+        return False
+
+    time.sleep(0.4)
+
+    snap2 = _raceinfo_snapshot(addr)
+    if snap2 is None:
+        return False
+    players_ptr2, player0_ptr2, maxlap2, pos2 = snap2
+
+    # The pointers and maxLap are structural -- they should be IDENTICAL a
+    # moment later for a real, stable singleton. Position is allowed to
+    # change (the race is live), but must still look sane.
+    if players_ptr1 != players_ptr2 or player0_ptr1 != player0_ptr2:
+        return False
+    if maxlap2 != 3 or pos2 > 12:
+        return False
+    return True
 
 
 def find_raceinfo_candidates():
