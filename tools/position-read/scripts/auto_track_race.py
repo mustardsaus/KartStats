@@ -71,7 +71,12 @@ REGIONS = [
 ]
 
 POSITION_MIN, POSITION_MAX = 1, 12   # 1st..12th (max racers in a MKW race)
-MAXLAP_MIN, MAXLAP_MAX = 2, 9        # real races are 3 laps; a "1-lap race" is never real, just noise
+# Every GP/VS race in Mario Kart Wii is exactly 3 laps -- no exceptions. Every
+# false lock seen in live testing (maxLap read as 2, 4, 8) had a maxLap that
+# could never be real; being "generous" here was exactly what let noise in.
+# Locking this to the one real value is the single highest-leverage filter
+# in this whole script.
+MAXLAP_MIN, MAXLAP_MAX = 3, 3
 
 NARROW_ROUNDS = 5
 NARROW_INTERVAL_S = 1.2
