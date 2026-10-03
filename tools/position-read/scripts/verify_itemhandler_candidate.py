@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
-"""Live-watch the strongest candidate ItemHandler address found by
-item_snapshot_diff.py's 5-round intersection: 0x8034155C
-(ItemHandler base 0x8034153A + recvPackets[player_id].item_tail, for
-player id 0).
+"""Live-watch a candidate ItemHandler address found by item_snapshot_diff.py's
+round intersection.
 
-That address stood out from the other 6 survivors in the intersection
-because it showed a DIFFERENT, plausible item every round (Lightning,
-Triple Mushroom, Golden Mushroom, Bullet Bill, Lightning) while the other
-6 showed the exact same transition every single round regardless of what
-was picked up -- a signature of an unrelated periodic array (almost
-certainly in-flight shell/banana projectile objects on the track), not a
-real per-player signal.
+IMPORTANT -- this is a HEAP address, and we now have direct evidence
+(Raceinfo's own address logged as 0x81118270 in one item_snapshot_diff run
+and 0x811183B0 in the next, same Dolphin boot, different race) that these
+heap objects get reallocated at a NEW address every race, not just every
+Dolphin restart. So a candidate found during one race's rounds is only
+valid for THAT SAME race -- run this before that race ends, not after. The
+very first real-world test of the previous hardcoded default
+(0x8034155C from a 5-round intersection, the one candidate that varied
+plausibly every round while 6 others showed the exact same transition
+regardless of pickups) came back frozen at "Green Shell" the whole race --
+consistent with it being stale from the race item_snapshot_diff.py was
+actually run in, not the race it was tested in.
 
-This is a HEAP address from that specific play session, so it will almost
-certainly be wrong after Dolphin/the game restarts. Only run this while
-still in the same Dolphin session item_snapshot_diff.py was run in. If it
-tracks correctly, the next step is a reverse-pointer scan (same technique
-already used for Raceinfo::sInstance) to find the permanent static pointer
-to this object, so it survives restarts too.
+If a candidate tracks correctly within its own race, the next step is a
+reverse-pointer scan (same technique already used for Raceinfo::sInstance)
+to find the permanent static pointer to this object, so it survives races
+and restarts going forward.
 
-Usage: python3 verify_itemhandler_candidate.py
+Usage: python3 verify_itemhandler_candidate.py [itemhandler_addr_hex]
+  itemhandler_addr_hex: the ItemHandler base address to watch, e.g. 0x8034153A
+    (recvPackets[0].item_tail minus ITEMHANDLER_OFF_RECV_PACKETS(0x10) minus
+    ITEMPACKET_OFF_ITEM_TAIL(2) -- i.e. subtract 0x12 from whatever address
+    item_snapshot_diff.py printed as a surviving candidate). Defaults to the
+    address from the first (already-stale) test if omitted.
 Prints a line every time the held item changes, live, so you can compare
 it against what you actually see happening in-game. Ctrl+C to stop.
 """
@@ -32,7 +38,7 @@ import auto_track_race as atr  # noqa: E402
 
 dme = atr.dme
 
-CANDIDATE_ITEMHANDLER_ADDR = 0x8034153A  # = 0x8034155C - ITEMHANDLER_OFF_RECV_PACKETS(0x10) - ITEMPACKET_OFF_ITEM_TAIL(2), player id 0
+DEFAULT_CANDIDATE_ITEMHANDLER_ADDR = 0x8034153A  # stale -- see module docstring; pass a fresh one as argv[1]
 POLL_INTERVAL_S = 0.2
 
 
@@ -47,6 +53,17 @@ def decode(value) -> str:
 
 
 def main() -> None:
+    if len(sys.argv) > 1:
+        candidate_addr = int(sys.argv[1], 16)
+    else:
+        candidate_addr = DEFAULT_CANDIDATE_ITEMHANDLER_ADDR
+        print(
+            f"No address given on the command line -- defaulting to 0x{candidate_addr:08X}, "
+            "which is already known to be stale from a previous race. Pass a fresh address "
+            "(e.g. `python3 verify_itemhandler_candidate.py 0x8034153A`) from THIS race's "
+            "item_snapshot_diff.py run instead.\n"
+        )
+
     atr.hook_with_retry()
     raceinfo_addr = atr.try_fast_path()
     if raceinfo_addr is None:
@@ -57,7 +74,7 @@ def main() -> None:
         raceinfo_addr = candidates[0]
     player_addr = atr.get_local_player_addr(raceinfo_addr)
     player_id = dme.read_byte(player_addr + atr.PLAYER_OFF_ID)
-    print(f"Local player id = {player_id}. Watching candidate ItemHandler @ 0x{CANDIDATE_ITEMHANDLER_ADDR:08X}.")
+    print(f"Local player id = {player_id}. Watching candidate ItemHandler @ 0x{candidate_addr:08X}.")
     print("Play normally -- I'll print a line every time this address's item_tail changes. Ctrl+C to stop.\n")
 
     start = time.time()
@@ -67,7 +84,7 @@ def main() -> None:
         if not dme.is_hooked():
             print("Lost hook to Dolphin. Exiting.")
             return
-        packet = atr.read_item_packet(CANDIDATE_ITEMHANDLER_ADDR, player_id)
+        packet = atr.read_item_packet(candidate_addr, player_id)
         if packet is None:
             print("  (couldn't read -- candidate address may no longer be valid, e.g. Dolphin/game restarted)")
             time.sleep(1.0)

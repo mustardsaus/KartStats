@@ -193,6 +193,7 @@ def main() -> None:
         )
 
         player_id = find_player_id(f)
+        item_tail_off = atr.ITEMHANDLER_OFF_RECV_PACKETS + player_id * atr.ITEMPACKET_SIZE + atr.ITEMPACKET_OFF_ITEM_TAIL
         running_intersection = [None]  # list so diff_round can mutate by reference
         round_num = 0
 
@@ -221,7 +222,13 @@ def main() -> None:
             log(f, f"[round {round_num}] plausible candidate(s) this round: {len(round_plausible)}")
             log(f, f"[round {round_num}] running intersection across all rounds so far: {len(running_intersection[0])}")
             for addr in sorted(running_intersection[0]):
-                log(f, f"    0x{addr:08X}")
+                log(f, f"    0x{addr:08X}  (ItemHandler base 0x{addr - item_tail_off:08X})")
+            log(
+                f,
+                "    -- these are heap addresses from THIS race only (confirmed: Raceinfo's own address "
+                "changes every race, even without restarting Dolphin). To verify one, run "
+                "verify_itemhandler_candidate.py <ItemHandler base> RIGHT NOW, before this race ends.",
+            )
             log(f, "")
 
         log(f, "=== final summary ===")
@@ -234,7 +241,13 @@ def main() -> None:
         else:
             log(f, f"{len(running_intersection[0])} address(es) stayed plausible across every round:")
             for addr in sorted(running_intersection[0]):
-                log(f, f"  0x{addr:08X}")
+                log(f, f"  0x{addr:08X}  (ItemHandler base 0x{addr - item_tail_off:08X})")
+            log(
+                f,
+                "\nThese are heap addresses from THIS race only -- verify_itemhandler_candidate.py "
+                "<ItemHandler base> needs to run before this race ends, or they'll be stale "
+                "(a fresh race reallocates these objects at new addresses, same as Raceinfo).",
+            )
 
 
 if __name__ == "__main__":
