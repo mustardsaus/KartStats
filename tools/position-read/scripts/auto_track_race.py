@@ -91,6 +91,22 @@ STATE_DC = 0x10
 STATE_FINISHING = 0x20              # the real "crossed the finish line" signal
 STATE_COMING_LAST_ANIM = 0x40
 
+# raceinfo.h's own documented pointer fields on RaceinfoPlayer -- used by
+# the pointer-chase path to label known, expected pointers (so they're easy
+# to recognize and skip past) rather than mysterious ones worth chasing.
+KNOWN_PLAYER_POINTER_OFFSETS = {
+    0x3C: "lapFinishTimes",
+    0x40: "raceFinishTime",
+    0x48: "controllerHolder",
+}
+# RaceinfoPlayer objects are packed 0xC4 bytes apart in memory (confirmed
+# across two full races -- the documented struct is only 0x54 bytes, but
+# every field repeats again exactly 0xC4 bytes later, matching another
+# racer's identical fields), so the player-item scan window
+# (PLAYER_ITEM_SCAN_SIZE) actually contains ~3 racers' worth of structs.
+# This is also used to label which "copy" a pointer-chase offset fell in.
+PLAYER_STRUCT_STRIDE = 0xC4
+
 POINTER_SIZE = 4  # 32-bit PowerPC target
 PLAYER_SLOT_INDEX = 0  # players[0] is the local player in single-player
 
@@ -343,6 +359,42 @@ NOISY_ITEMPACKET_FIELDS = {"timer", "ack_timer"}
 # full history is still in the end-of-race summary either way.
 VERBOSE_PLAYER_WINDOW = bool(os.environ.get("MKW_VERBOSE_PLAYER_WINDOW"))
 
+# --- Held item, step 3: chase pointers out of the player struct window -----
+# Both earlier approaches failed with real, logged evidence (see the long
+# comment blocks above): the struct window itself only ever contained known
+# fields and other racers' identical structs packed 0xC4 bytes apart
+# (confirmed by exact offset math against raceinfo.h across two full
+# races), and ITEMHandler either never resolves (the published static
+# address is wrong for this build) or can't be disambiguated from real
+# game memory's actual noise (the content scan returns 100,000+ ambiguous
+# candidates against real RAM, even though it worked cleanly in synthetic
+# testing -- real memory has huge zero/sparse regions a uniform-random
+# test doesn't capture).
+#
+# This is the user's own original suggestion, revisited now that both
+# more-targeted guesses have been ruled out: scan the ALREADY-100%-
+# reliable player struct window for any 4-byte-aligned slot whose CURRENT
+# value looks like a real pointer (lands in MEM1 or MEM2 -- the same
+# fingerprint _in_valid_range already uses to help find Raceinfo itself),
+# and additionally watch a window at wherever each one points. Every
+# candidate address here comes from live, already-verified memory (the
+# window we know is correct) rather than a guessed or published number,
+# which is what makes this different from the two approaches that failed.
+# Some of these pointers will be the documented, known ones (lapFinishTimes
+# at 0x3C, raceFinishTime at 0x40, controllerHolder at 0x48, each for all
+# ~3 racer copies visible in the window) -- expected, not interesting, and
+# labeled by source offset in the summary so they're easy to recognize and
+# skip over while scanning for the real one.
+POINTER_TARGET_SCAN_SIZE = 0x120  # a guess at a useful per-target size, not
+                                   # a claimed real object size -- same
+                                   # spirit as PLAYER_ITEM_SCAN_SIZE above
+MAX_TRACKED_POINTERS = 16  # defensive cap, same spirit as MAX_REPORTED in
+                            # watch_held_item_candidates.py -- don't let a
+                            # fluke blow up the per-tick read count
+# Live-printing every change across up to 16 extra watched windows would
+# repeat the exact output-flood mistake patch 47 just fixed for the other
+# two paths -- history is collected silently and dumped once at race end.
+
 # The real item enum only covers 0x00-0x12 (see ITEM_NAMES below); any byte
 # outside that range isn't a plausible item id.
 HELD_ITEM_MIN = 0x00
@@ -370,6 +422,28 @@ def read_player_item_window(player_addr: int):
     for position/lap every tick anyway."""
     try:
         return np.frombuffer(dme.read_bytes(player_addr, PLAYER_ITEM_SCAN_SIZE), dtype=np.uint8)
+    except Exception:
+        return None
+
+
+def find_pointer_offsets(window) -> list:
+    """4-byte-aligned offsets in `window` (a numpy byte array, as returned
+    by read_player_item_window) whose CURRENT value looks like a real
+    pointer into MEM1 or MEM2 -- same fingerprint _in_valid_range already
+    uses elsewhere in this file to help find Raceinfo itself."""
+    n = len(window) // 4
+    if n <= 0:
+        return []
+    vals = _read_u32_field(window, 0, n)
+    hits = np.nonzero(_in_valid_range(vals))[0]
+    return [int(h) * 4 for h in hits]
+
+
+def read_pointer_target_window(addr: int):
+    """Same idea as read_player_item_window, but for wherever a pointer
+    found inside the player struct window currently points."""
+    try:
+        return np.frombuffer(dme.read_bytes(addr, POINTER_TARGET_SCAN_SIZE), dtype=np.uint8)
     except Exception:
         return None
 
@@ -1206,6 +1280,7 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
     item_packet_history = {}  # field_name -> [(elapsed_s, value), ...]
     itemhandler_addr = None
     itemhandler_scan_done = False  # one attempt per race -- see the call site's comment
+    ptr_tracked = {}  # source_offset -> {"target", "window", "history", "retargets"}
 
     first = read_player(player_addr)
     if first is not None:
@@ -1257,6 +1332,45 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
                             flush=True,
                         )
             prev_window = cur_window
+
+            # Pointer-chase path -- see the "Held item, step 3" comment block
+            # above POINTER_TARGET_SCAN_SIZE for why this is the current,
+            # most-grounded approach (every candidate address comes from
+            # this already-verified window, not a guess or a published
+            # number). Quiet by design -- see that same comment block for
+            # why nothing here live-prints; everything shows up in
+            # _print_pointer_chase_summary at race end instead.
+            if cur_window is not None:
+                for src_offset in find_pointer_offsets(cur_window):
+                    target_addr = int(_read_u32_field(cur_window, src_offset, 1)[0])
+                    state = ptr_tracked.get(src_offset)
+                    if state is None:
+                        if len(ptr_tracked) >= MAX_TRACKED_POINTERS:
+                            continue
+                        ptr_tracked[src_offset] = {
+                            "target": target_addr,
+                            "window": read_pointer_target_window(target_addr),
+                            "history": {},
+                            "retargets": [(elapsed, target_addr)],
+                        }
+                        continue
+                    if state["target"] != target_addr:
+                        state["target"] = target_addr
+                        state["window"] = read_pointer_target_window(target_addr)
+                        state["retargets"].append((elapsed, target_addr))
+                        continue
+                    new_window = read_pointer_target_window(target_addr)
+                    if (
+                        new_window is not None
+                        and state["window"] is not None
+                        and len(new_window) == len(state["window"])
+                    ):
+                        diff_idx = np.nonzero(state["window"] != new_window)[0]
+                        for i in diff_idx:
+                            off = int(i)
+                            new_val = int(new_window[i])
+                            state["history"].setdefault(off, []).append((elapsed, new_val))
+                    state["window"] = new_window
 
             # ITEMHandler path -- see the "Held item, step 2" comment block
             # above ITEMHANDLER_SINSTANCE_ADDR for why this verifies content
@@ -1310,11 +1424,13 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
             if SCAN_PLAYER_ITEM:
                 _print_player_item_summary(race_num, offset_history)
                 _print_item_packet_summary(race_num, item_packet_history)
+                _print_pointer_chase_summary(race_num, ptr_tracked)
             return cur[:3], "finished"
         if stage is not None and stage != 2:
             if SCAN_PLAYER_ITEM:
                 _print_player_item_summary(race_num, offset_history)
                 _print_item_packet_summary(race_num, item_packet_history)
+                _print_pointer_chase_summary(race_num, ptr_tracked)
             return cur[:3], "left_race_stage"
 
         time.sleep(POLL_INTERVAL_S)
@@ -1358,6 +1474,42 @@ def _print_item_packet_summary(race_num: int, item_packet_history: dict) -> None
         hist_desc = ", ".join(f"{t}s:{_decode_item_field(name, v)}" for t, v in hist[:20])
         more = f" (+{len(hist) - 20} more)" if len(hist) > 20 else ""
         print(f"  {name}: {len(hist)} change(s) -- {hist_desc}{more}", flush=True)
+
+
+def _print_pointer_chase_summary(race_num: int, ptr_tracked: dict) -> None:
+    """End-of-race dump for the pointer-chase path -- see the "Held item,
+    step 3" comment block above POINTER_TARGET_SCAN_SIZE. For each player-
+    struct offset that looked like a real pointer at some point this race:
+    when/where its value pointed (retargets -- a reallocated target shows
+    up as more than one entry), and the full change history of whatever
+    window that pointer led to. Known, expected pointer fields
+    (KNOWN_PLAYER_POINTER_OFFSETS, for each of the ~3 racer copies visible
+    in the window -- see PLAYER_STRUCT_STRIDE) are labeled so they're easy
+    to recognize and skip past while scanning for the real one."""
+    if not ptr_tracked:
+        print(f"[race {race_num}] pointer chase: no player+offset looked like a real pointer this race.", flush=True)
+        return
+    print(f"[race {race_num}] pointer chase -- {len(ptr_tracked)} pointer-like offset(s) tracked:", flush=True)
+    for src_offset in sorted(ptr_tracked):
+        state = ptr_tracked[src_offset]
+        relative = src_offset % PLAYER_STRUCT_STRIDE
+        copy_idx = src_offset // PLAYER_STRUCT_STRIDE
+        known = KNOWN_PLAYER_POINTER_OFFSETS.get(relative)
+        label = f"{known}, copy {copy_idx}" if known else f"copy {copy_idx}, unrecognized field"
+        retarget_desc = ", ".join(f"{t}s:0x{a:08X}" for t, a in state["retargets"])
+        print(f"  player+0x{src_offset:02X} ({label}) -> {retarget_desc}", flush=True)
+        hist = state["history"]
+        if not hist:
+            print("    (nothing in that window changed)", flush=True)
+            continue
+        for offset in sorted(hist):
+            h = hist[offset]
+            hist_desc = ", ".join(
+                f"{t}s:{item_name(v) if HELD_ITEM_MIN <= v <= HELD_ITEM_MAX else f'0x{v:02X}'}"
+                for t, v in h[:20]
+            )
+            more = f" (+{len(h) - 20} more)" if len(h) > 20 else ""
+            print(f"    +0x{offset:02X}: {len(h)} change(s) -- {hist_desc}{more}", flush=True)
 
 
 def main() -> None:
