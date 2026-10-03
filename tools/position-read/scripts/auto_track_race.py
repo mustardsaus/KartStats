@@ -229,37 +229,45 @@ ITEMPACKET_OFF_MODE = 0x03        # 0 = no item, 1-7 = handshake/activation stat
 ITEMPACKET_OFF_TAIL_MODE = 0x04   # 0, or 3-7 (hold/shoot/3-3/2-3/1-3)
 ITEMPACKET_OFF_ACKNOWLEDGE = 0x05  # 0 = ok, 1 = fail
 ITEMPACKET_OFF_PADDING = 0x07      # always 0 -- a strong per-record filter
-ITEMPACKET_OFF_TIMER = 0x00        # ticks; also doubles as the "not just blank memory" check below
-ITEMPACKET_OFF_ACK_TIMER = 0x06
 
-# Live testing found the bug the hard way: the per-race scan silently hung
-# for minutes with position tracking blocked behind it (nothing printed
-# after "track: ..."). Root cause, by re-reading the filter rather than
-# guessing: NONE of the byte checks above reject an all-zero record -- a
-# record that's entirely 0x00 trivially satisfies item_box<=0x14, mode<=7,
-# tail_mode==0, ack<=1, AND pad==0 all at once. Emulated RAM is full of
-# large all-zero regions (unused heap, inactive buffers), so a contiguous
-# 0x70-byte all-zero stretch matches at EVERY 4-byte-aligned offset inside
-# it -- almost certainly the tens of thousands of raw hits that were queued
-# up for the slow one-by-one verify_itemhandler_candidate (0.4s sleep each),
-# which is what actually hung. Two independent fixes, not a guess at a new
-# address: (1) reject the degenerate all-zero match outright -- it carries
-# no information regardless of cause, since literally any blank memory
-# produces it; (2) cap how many raw hits ever reach the slow per-candidate
-# verify, so a filter that's still too loose can never again block the
-# tracker for more than a few seconds. (ITEMHANDLER_VERIFY_WINDOW_S below
-# made each check slower in exchange for being a much tighter filter, so
-# this cap was lowered to keep the worst case bounded -- see that
-# constant's comment.)
-ITEMHANDLER_MAX_VERIFY = 15
-
-# How long verify_itemhandler_candidate waits between its before/after
-# byte reads. Long enough to give an actual 12-racer race a real chance to
-# touch an item somewhere during the wait (so a genuine ITEMHandler, even
-# one that's briefly quiet, isn't rejected as "static" by bad luck); short
-# enough that ITEMHANDLER_MAX_VERIFY candidates in the worst case (15 * 1.2s
-# = 18s) stays a one-time, bounded cost on first discovery, not a repeat of
-# the original hang.
+# Live testing found two successive bugs the hard way, both in how
+# candidates get verified rather than in the shape filter's byte ranges:
+#
+# Bug 1 (hang): the per-race scan silently hung for minutes with position
+# tracking blocked behind it (nothing printed after "track: ..."). NONE of
+# the byte checks above reject an all-zero record -- 0x00 trivially
+# satisfies item_box<=0x14, mode<=7, tail_mode==0, ack<=1, AND pad==0 all
+# at once -- and emulated RAM is full of large all-zero regions, so a
+# contiguous 0x70-byte all-zero stretch matches at EVERY 4-byte-aligned
+# offset inside it. That produced tens of thousands of raw hits, each
+# queued for a slow one-by-one scalar verify with a sleep -- which is what
+# hung.
+#
+# Bug 2 (wrong data, found after fixing bug 1): even rejecting all-zero
+# and checking stability twice 0.4s apart, the next live race still
+# "found" an ITEMHandler and printed "Green Shell" for every slot all
+# race. The address it landed on (0x80002380) turned out to be deep in
+# the Wii's OS-reserved/IPL memory -- documented platform fact, dense
+# with small repeating integers and zero-ish bytes, i.e. exactly this
+# filter's blind spot. "Stable" and "static" aren't the same thing: that
+# region is PERFECTLY stable (it never changes, ever), which satisfied
+# the old recheck just as well as a real, live ITEMHandler would.
+#
+# ITEMHANDLER_REGIONS below is the direct, log-driven fix for where that
+# specific false match landed. ITEMHANDLER_VERIFY_WINDOW_S is the general
+# fix for the underlying gap: find_itemhandler_candidates takes two full
+# snapshots of the scanned memory this many seconds apart and keeps only
+# addresses whose bytes actually differ between them, on top of the shape
+# still holding both times. A real ITEMHandler during an active race with
+# up to 12 racers should show SOME byte move somewhere in its 0x70 bytes
+# within a couple of seconds; a static table, wherever it happens to sit,
+# never will, no matter how long you wait. Because this check is done as
+# two bulk array reads + a vectorized numpy comparison (not a per-address
+# read+sleep loop), it scales to checking every single raw hit -- tens of
+# thousands of them if that's what the shape filter still produces --
+# instead of only ever looking at the first handful in address order
+# (which, being deterministic, would otherwise never reach the real one
+# if it happens to not be among those first few).
 ITEMHANDLER_VERIFY_WINDOW_S = 1.2
 
 # Live data from a real race pinned the actual problem the hang-fix above
@@ -297,43 +305,25 @@ def item_name(item_id: int) -> str:
     return ITEM_NAMES.get(item_id, f"unknown item (id 0x{item_id:02X})")
 
 
-def scan_region_for_itemhandler(start: int, end: int):
-    """Vectorized pass over [start, end) for 4-byte-aligned addresses where
-    the following ITEMHANDLER_SCAN_SIZE (0x70) bytes look like 14 back-to-
-    back ITEMPacket records (sendPackets[2] + recvPackets[12]): each record
-    independently has to satisfy several small-range byte constraints at
-    once (item_box<=0x14, item_tail<=0x14, mode<=7, tail_mode in {0,3..7},
-    acknowledge<=1, padding==0) -- and ALL 14 repeats of that same pattern
-    have to hold simultaneously for one candidate address to pass. ALSO
-    requires at least one nonzero byte somewhere across the whole 0x70-byte
-    window, across any race -- see ITEMHANDLER_MAX_VERIFY's comment for why
-    an all-zero match is rejected outright rather than treated as a hit.
-    Returns the list of candidate addresses -- an empty list is itself
-    useful information (see ensure_itemhandler_addr), not just "nothing to
-    do"."""
-    size = end - start
-    try:
-        buf = dme.read_bytes(start, size)
-    except Exception as exc:
-        print(f"  (couldn't read 0x{start:08X}-0x{end:08X}: {exc})")
-        return []
-
-    arr = np.frombuffer(buf, dtype=np.uint8)
-    n = (len(arr) - ITEMHANDLER_SCAN_SIZE) // 4 + 1
-    if n <= 0:
-        return []
-
+def _itemhandler_shape_mask(arr, n):
+    """The per-record shape check as one vectorized pass over a byte array:
+    each of the 14 back-to-back ITEMPacket records (sendPackets[2] +
+    recvPackets[12]) independently has to satisfy several small-range byte
+    constraints at once (item_box<=0x14, item_tail<=0x14, mode<=7,
+    tail_mode in {0,3..7}, acknowledge<=1, padding==0), and ALL 14 repeats
+    have to hold simultaneously for one candidate start position to pass.
+    Returns a boolean mask over the n candidate positions. Shared by both
+    snapshots in find_itemhandler_candidates so the identical constraints
+    get applied to each -- no all-zero special case needed here anymore,
+    see that function for why the liveliness check subsumes it."""
     mask = np.ones(n, dtype=bool)
-    any_nonzero = np.zeros(n, dtype=bool)
     for rec in range(ITEM_RECORD_COUNT):
         base = rec * ITEM_RECORD_SIZE
-        timer = _read_u8_field(arr, base + ITEMPACKET_OFF_TIMER, n)[:n]
         item_box = _read_u8_field(arr, base + ITEMPACKET_OFF_ITEM_BOX, n)[:n]
         item_tail = _read_u8_field(arr, base + ITEMPACKET_OFF_ITEM_TAIL, n)[:n]
         mode = _read_u8_field(arr, base + ITEMPACKET_OFF_MODE, n)[:n]
         tail_mode = _read_u8_field(arr, base + ITEMPACKET_OFF_TAIL_MODE, n)[:n]
         ack = _read_u8_field(arr, base + ITEMPACKET_OFF_ACKNOWLEDGE, n)[:n]
-        ack_timer = _read_u8_field(arr, base + ITEMPACKET_OFF_ACK_TIMER, n)[:n]
         pad = _read_u8_field(arr, base + ITEMPACKET_OFF_PADDING, n)[:n]
         mask &= (
             (item_box <= 0x14)
@@ -343,51 +333,22 @@ def scan_region_for_itemhandler(start: int, end: int):
             & (ack <= 1)
             & (pad == 0)
         )
-        any_nonzero |= (
-            (timer != 0)
-            | (item_box != 0)
-            | (item_tail != 0)
-            | (mode != 0)
-            | (tail_mode != 0)
-            | (ack != 0)
-            | (ack_timer != 0)
-        )
-    mask &= any_nonzero
-    idxs = np.nonzero(mask)[0]
-    return [int(start + i * 4) for i in idxs]
+    return mask
 
 
-def _itemhandler_snapshot_ok(addr: int) -> bool:
-    """Re-applies the same per-record shape check scalar-style to one
-    specific candidate address, for the stability recheck in
-    verify_itemhandler_candidate. Values (item_box, mode, ...) are allowed
-    to have legitimately changed since the last read -- items get picked
-    up and used constantly -- so this re-checks the SHAPE holds, not that
-    the values are identical."""
-    try:
-        buf = dme.read_bytes(addr, ITEMHANDLER_SCAN_SIZE)
-    except Exception:
-        return False
-    shape_ok, saw_nonzero = _itemhandler_shape_ok(buf)
-    return shape_ok and saw_nonzero  # all-zero stays rejected here too, see scan_region_for_itemhandler
-
-
-def _itemhandler_shape_ok(buf) -> tuple:
-    """The actual per-record shape check, factored out of
-    _itemhandler_snapshot_ok so verify_itemhandler_candidate can run it
-    against bytes it already has (for the liveliness check below) instead
-    of re-reading memory just to re-derive the same bool. Returns (shape_ok,
-    saw_nonzero)."""
-    saw_nonzero = False
+def _itemhandler_shape_ok_scalar(buf) -> bool:
+    """Scalar equivalent of _itemhandler_shape_mask for a single already-
+    read ITEMHANDLER_SCAN_SIZE-byte buffer -- used by _itemhandler_snapshot_ok
+    (the cheap per-race "is the address we already trust still shaped
+    right" recheck), where reading just one address doesn't justify the
+    numpy machinery."""
     for rec in range(ITEM_RECORD_COUNT):
         base = rec * ITEM_RECORD_SIZE
-        timer = buf[base + ITEMPACKET_OFF_TIMER]
         item_box = buf[base + ITEMPACKET_OFF_ITEM_BOX]
         item_tail = buf[base + ITEMPACKET_OFF_ITEM_TAIL]
         mode = buf[base + ITEMPACKET_OFF_MODE]
         tail_mode = buf[base + ITEMPACKET_OFF_TAIL_MODE]
         ack = buf[base + ITEMPACKET_OFF_ACKNOWLEDGE]
-        ack_timer = buf[base + ITEMPACKET_OFF_ACK_TIMER]
         pad = buf[base + ITEMPACKET_OFF_PADDING]
         if not (
             item_box <= 0x14
@@ -397,78 +358,93 @@ def _itemhandler_shape_ok(buf) -> tuple:
             and ack <= 1
             and pad == 0
         ):
-            return False, saw_nonzero
-        if timer or item_box or item_tail or mode or tail_mode or ack or ack_timer:
-            saw_nonzero = True
-    return True, saw_nonzero  # saw_nonzero: reject the degenerate all-zero match, see caller
+            return False
+    return True
 
 
-def verify_itemhandler_candidate(addr: int) -> bool:
-    """Tighter than the old two-snapshot stability check (shape holds twice,
-    0.4s apart): that's necessary but not sufficient, since the bottom of
-    MEM1's OS-reserved area (see ITEMHANDLER_REGIONS) satisfied it too --
-    it's just as structurally stable as real ITEMHandler, because it's
-    STATIC. It never changes, period. Real ITEMHandler during an actual
-    race practically always will, somewhere in its 0x70 bytes, within a
-    couple seconds -- MKW races have up to 12 racers, and it's vanishingly
-    unlikely none of them touch an item for that whole window. So this now
-    additionally requires the raw bytes to NOT be byte-for-byte identical
-    before vs. after the wait: shape-holds-but-never-changes is exactly the
-    signature of a coincidentally-shaped static table, not a live object."""
+def _itemhandler_snapshot_ok(addr: int) -> bool:
+    """Cheap per-race recheck of an itemhandler_addr already trusted from a
+    previous race: does the shape still hold right now? Deliberately does
+    NOT redo the liveliness check (that's a one-time discovery cost, not
+    something to pay every race) -- this only guards against the object
+    having been freed/reused for something else since."""
     try:
-        before = dme.read_bytes(addr, ITEMHANDLER_SCAN_SIZE)
+        buf = dme.read_bytes(addr, ITEMHANDLER_SCAN_SIZE)
     except Exception:
         return False
-    shape_ok, _ = _itemhandler_shape_ok(before)
-    if not shape_ok:
-        return False
-
-    time.sleep(ITEMHANDLER_VERIFY_WINDOW_S)
-
-    try:
-        after = dme.read_bytes(addr, ITEMHANDLER_SCAN_SIZE)
-    except Exception:
-        return False
-    shape_ok, _ = _itemhandler_shape_ok(after)
-    if not shape_ok:
-        return False
-
-    return before != after
+    return _itemhandler_shape_ok_scalar(buf)
 
 
 def find_itemhandler_candidates():
-    """One-time structural scan for a real ITEMHandler object, mirroring
-    find_raceinfo_candidates. Returns (found, raw_hit_count, capped):
-    found is every address that matched the shape filter AND survived the
-    stability recheck; raw_hit_count is how many addresses matched the
-    shape filter BEFORE that recheck, across both regions -- kept separate
-    so a zero-candidates result can say which stage failed; capped is True
-    if raw_hit_count exceeded ITEMHANDLER_MAX_VERIFY and the slow per-
-    candidate verify (ITEMHANDLER_VERIFY_WINDOW_S sleep each, now also
-    checking liveliness, not just shape) was cut off before checking all of
-    them. That cap exists because it's exactly what hung the tracker live:
-    a filter that still matches more than a handful of addresses turns the
-    "verify everything" loop into a multi-minute block on the main race
-    loop, with nothing printed (not even positions) the whole time it's
-    stuck. Printed scan stats happen in ensure_itemhandler_addr, right
-    after this returns -- not buried after the slow part. Scans
-    ITEMHANDLER_REGIONS (not the shared REGIONS used for Raceinfo) -- see
-    that constant's comment for why the bottom of MEM1 is excluded here."""
+    """Structural scan for a real ITEMHandler object, mirroring
+    find_raceinfo_candidates but with an extra liveliness pass that
+    find_raceinfo_candidates doesn't need (Raceinfo's own fingerprint --
+    several pointer fields all landing in valid RAM ranges at once -- is
+    already sharp enough on its own; ITEMHandler's small-byte-range
+    fingerprint is not, as live testing proved twice over).
+
+    For each of ITEMHANDLER_REGIONS: read the whole region (snapshot T0),
+    compute the shape mask over it, wait ITEMHANDLER_VERIFY_WINDOW_S, read
+    the SAME region again (snapshot T1), compute the shape mask again, and
+    keep only start positions where the shape held in BOTH snapshots AND
+    the raw bytes at T0 differ from T1. A real ITEMHandler during an
+    active race (up to 12 racers) should show some byte move somewhere in
+    its 0x70 bytes within that window; a merely coincidentally-shaped
+    static table -- wherever in memory it happens to sit -- never will,
+    which is what actually produced patch 37's "Green Shell for
+    everything" false match (a perfectly stable, but also perfectly
+    static, address in MEM1's OS-reserved band).
+
+    Doing this as two bulk array reads + vectorized numpy comparisons
+    (instead of a per-address read-wait-read loop) means every single raw
+    hit gets the liveliness check -- all of them, however many thousands
+    the shape filter still produces -- not just the first handful in
+    address order. That matters: address order is deterministic, so a
+    fixed-size cap on "check only the first N" would check the exact same
+    N addresses every single race forever, and could never find the real
+    one if it isn't among them.
+
+    Returns (found, raw_hit_count): found is every address passing both
+    the shape-held-twice and the liveliness check; raw_hit_count is how
+    many passed the shape check at T0 alone, kept separate so a
+    zero-candidates result can say which stage failed."""
     found = []
     raw_hit_count = 0
-    verified = 0
-    capped = False
     for start, end in ITEMHANDLER_REGIONS:
-        raw_hits = scan_region_for_itemhandler(start, end)
-        raw_hit_count += len(raw_hits)
-        for addr in raw_hits:
-            if verified >= ITEMHANDLER_MAX_VERIFY:
-                capped = True
-                continue  # keep counting raw_hit_count for the rest of this region, just stop verifying
-            verified += 1
-            if verify_itemhandler_candidate(addr):
-                found.append(addr)
-    return found, raw_hit_count, capped
+        size = end - start
+        try:
+            buf0 = dme.read_bytes(start, size)
+        except Exception as exc:
+            print(f"  (couldn't read 0x{start:08X}-0x{end:08X}: {exc})")
+            continue
+
+        arr0 = np.frombuffer(buf0, dtype=np.uint8)
+        n = (len(arr0) - ITEMHANDLER_SCAN_SIZE) // 4 + 1
+        if n <= 0:
+            continue
+
+        mask0 = _itemhandler_shape_mask(arr0, n)
+        raw_hit_count += int(np.count_nonzero(mask0))
+
+        time.sleep(ITEMHANDLER_VERIFY_WINDOW_S)
+
+        try:
+            buf1 = dme.read_bytes(start, size)
+        except Exception as exc:
+            print(f"  (couldn't re-read 0x{start:08X}-0x{end:08X} for the liveliness check: {exc})")
+            continue
+        if len(buf1) != len(buf0):
+            continue  # region layout changed mid-check; skip, ensure_itemhandler_addr retries next race
+
+        arr1 = np.frombuffer(buf1, dtype=np.uint8)
+        mask1 = _itemhandler_shape_mask(arr1, n)
+        stable_mask = mask0 & mask1
+
+        for i in np.nonzero(stable_mask)[0]:
+            offset = int(i) * 4
+            if buf0[offset : offset + ITEMHANDLER_SCAN_SIZE] != buf1[offset : offset + ITEMHANDLER_SCAN_SIZE]:
+                found.append(start + offset)
+    return found, raw_hit_count
 
 
 def read_item_box(itemhandler_addr: int, player_id: int):
@@ -523,30 +499,22 @@ def _item_suffix(itemhandler_addr, player_id: int) -> str:
 def ensure_itemhandler_addr(itemhandler_addr):
     """Called once per race (see main()): keeps the current itemhandler_addr
     if it still passes the shape recheck, otherwise runs a fresh discovery
-    scan. Always prints what that scan actually found -- 0 raw hits means
-    the shape filter itself is too strict for real memory (or wrong
-    offsets entirely); raw hits but 0 survivors means the shape matches
-    somewhere but doesn't hold up a moment later (more likely a genuine
-    false positive than real ITEMHandler, since that struct shouldn't be
-    structurally unstable); more than one survivor means disambiguation is
-    needed eventually, but for now this just uses the first and says so.
-    A large raw_hit_count that got capped is flagged explicitly -- that's
-    the shape filter matching too much real memory (see ITEMHANDLER_MAX_VERIFY),
-    not a sign anything is actually close to working."""
+    scan (find_itemhandler_candidates -- shape held in two snapshots AND
+    the bytes actually changed between them). Always prints what that scan
+    actually found -- 0 raw hits means the shape filter itself is too
+    strict for real memory (or wrong offsets entirely); raw hits but 0
+    survivors means plenty of memory looks shaped right but none of it is
+    actually live, which given a real race was in progress the whole time
+    points at wrong offsets rather than bad luck; more than one survivor
+    means disambiguation is needed eventually, but for now this just uses
+    the first and says so."""
     if itemhandler_addr is not None and _itemhandler_snapshot_ok(itemhandler_addr):
         return itemhandler_addr
-    candidates, raw_hit_count, capped = find_itemhandler_candidates()
-    if capped:
-        print(
-            f"ITEMHandler scan: {raw_hit_count} raw shape-match(es) -- far more than expected, "
-            f"only checked the first {ITEMHANDLER_MAX_VERIFY} for stability. The filter is "
-            "matching too much real memory; treat any candidate found this way as unreliable.",
-            flush=True,
-        )
+    candidates, raw_hit_count = find_itemhandler_candidates()
     if not candidates:
         print(
             f"ITEMHandler scan: {raw_hit_count} raw shape-match(es), 0 survived the "
-            "stability recheck. Will retry next race.",
+            "liveliness recheck. Will retry next race.",
             flush=True,
         )
         return None
