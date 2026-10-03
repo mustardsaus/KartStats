@@ -496,6 +496,29 @@ def _item_suffix(itemhandler_addr, player_id: int) -> str:
     return f" item={item_name(item_id)}(mode={mode})"
 
 
+# Live testing (14 survivors in one race) showed WHY "just use the first
+# survivor" isn't good enough even after the liveliness fix: 5 of the 14
+# were 0x802B3E6C..0x802B3E8C, 8 bytes apart each -- the signature of one
+# genuinely-repeating structure matched at every overlapping start offset
+# within it, not 5 separate real objects. "Green Shell for everyone" came
+# right back because the FIRST (lowest-address) survivor, 0x802B3E6C, is
+# deep in the executable's own static .text/.data/.bss image -- something
+# there is both shaped right AND genuinely changing (some actively-written
+# buffer unrelated to items), which is exactly the kind of false positive
+# the liveliness check can't tell apart from a real live object using
+# shape+liveliness alone.
+#
+# Every per-race heap-allocated object actually confirmed so far --
+# Raceinfo's own object, across every race logged -- has landed at
+# 0x8110xxxx-0x8112xxxx, well above the static image. This is a
+# preference among already-verified-live candidates, not a new scan-time
+# exclusion: it never discards a survivor, it just tries the ones in that
+# same empirically-known neighborhood (or in MEM2, which is dynamic
+# audio/texture/heap territory, never static code) before falling back to
+# anything lower.
+ITEMHANDLER_HEAP_LIKELY_START = 0x81000000
+
+
 def ensure_itemhandler_addr(itemhandler_addr):
     """Called once per race (see main()): keeps the current itemhandler_addr
     if it still passes the shape recheck, otherwise runs a fresh discovery
@@ -506,8 +529,7 @@ def ensure_itemhandler_addr(itemhandler_addr):
     survivors means plenty of memory looks shaped right but none of it is
     actually live, which given a real race was in progress the whole time
     points at wrong offsets rather than bad luck; more than one survivor
-    means disambiguation is needed eventually, but for now this just uses
-    the first and says so."""
+    means picking among them -- see ITEMHANDLER_HEAP_LIKELY_START for how."""
     if itemhandler_addr is not None and _itemhandler_snapshot_ok(itemhandler_addr):
         return itemhandler_addr
     candidates, raw_hit_count = find_itemhandler_candidates()
@@ -518,13 +540,30 @@ def ensure_itemhandler_addr(itemhandler_addr):
             flush=True,
         )
         return None
-    if len(candidates) > 1:
+    if len(candidates) == 1:
+        return candidates[0]
+
+    heap_likely = [a for a in candidates if a >= ITEMHANDLER_HEAP_LIKELY_START]
+    non_heap = [a for a in candidates if a < ITEMHANDLER_HEAP_LIKELY_START]
+    chosen = (heap_likely or candidates)[0]
+    print(
+        f"ITEMHandler scan found {len(candidates)} candidate(s) "
+        f"({', '.join(f'0x{a:08X}' for a in candidates)}).",
+        flush=True,
+    )
+    if heap_likely:
         print(
-            f"ITEMHandler scan found {len(candidates)} candidate(s) "
-            f"({', '.join(f'0x{a:08X}' for a in candidates)}) -- using the first.",
+            f"  preferring heap-likely candidate(s) ({', '.join(f'0x{a:08X}' for a in heap_likely)}) "
+            f"over the rest ({', '.join(f'0x{a:08X}' for a in non_heap) or 'none'}) -- using 0x{chosen:08X}.",
             flush=True,
         )
-    return candidates[0]
+    else:
+        print(
+            f"  none of these are in the heap-likely range (>= 0x{ITEMHANDLER_HEAP_LIKELY_START:08X}); "
+            f"using the first anyway (0x{chosen:08X}), but treat it as low-confidence.",
+            flush=True,
+        )
+    return chosen
 
 
 def hook_with_retry(timeout_s: float = 30.0) -> None:
