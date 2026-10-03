@@ -247,8 +247,20 @@ ITEMPACKET_OFF_ACK_TIMER = 0x06
 # no information regardless of cause, since literally any blank memory
 # produces it; (2) cap how many raw hits ever reach the slow per-candidate
 # verify, so a filter that's still too loose can never again block the
-# tracker for more than a few seconds.
-ITEMHANDLER_MAX_VERIFY = 25
+# tracker for more than a few seconds. (ITEMHANDLER_VERIFY_WINDOW_S below
+# made each check slower in exchange for being a much tighter filter, so
+# this cap was lowered to keep the worst case bounded -- see that
+# constant's comment.)
+ITEMHANDLER_MAX_VERIFY = 15
+
+# How long verify_itemhandler_candidate waits between its before/after
+# byte reads. Long enough to give an actual 12-racer race a real chance to
+# touch an item somewhere during the wait (so a genuine ITEMHandler, even
+# one that's briefly quiet, isn't rejected as "static" by bad luck); short
+# enough that ITEMHANDLER_MAX_VERIFY candidates in the worst case (15 * 1.2s
+# = 18s) stays a one-time, bounded cost on first discovery, not a repeat of
+# the original hang.
+ITEMHANDLER_VERIFY_WINDOW_S = 1.2
 
 # Live data from a real race pinned the actual problem the hang-fix above
 # wasn't enough for: 23754 raw hits survived even the all-zero rejection,
@@ -356,6 +368,16 @@ def _itemhandler_snapshot_ok(addr: int) -> bool:
         buf = dme.read_bytes(addr, ITEMHANDLER_SCAN_SIZE)
     except Exception:
         return False
+    shape_ok, saw_nonzero = _itemhandler_shape_ok(buf)
+    return shape_ok and saw_nonzero  # all-zero stays rejected here too, see scan_region_for_itemhandler
+
+
+def _itemhandler_shape_ok(buf) -> tuple:
+    """The actual per-record shape check, factored out of
+    _itemhandler_snapshot_ok so verify_itemhandler_candidate can run it
+    against bytes it already has (for the liveliness check below) instead
+    of re-reading memory just to re-derive the same bool. Returns (shape_ok,
+    saw_nonzero)."""
     saw_nonzero = False
     for rec in range(ITEM_RECORD_COUNT):
         base = rec * ITEM_RECORD_SIZE
@@ -375,21 +397,43 @@ def _itemhandler_snapshot_ok(addr: int) -> bool:
             and ack <= 1
             and pad == 0
         ):
-            return False
+            return False, saw_nonzero
         if timer or item_box or item_tail or mode or tail_mode or ack or ack_timer:
             saw_nonzero = True
-    return saw_nonzero  # reject the degenerate all-zero match -- see scan_region_for_itemhandler
+    return True, saw_nonzero  # saw_nonzero: reject the degenerate all-zero match, see caller
 
 
 def verify_itemhandler_candidate(addr: int) -> bool:
-    """Same two-snapshot stability idea as verify_raceinfo_candidate: a
-    structural false positive caught once by sheer luck shouldn't still
-    look structurally sound a moment later, since real game memory keeps
-    moving around it."""
-    if not _itemhandler_snapshot_ok(addr):
+    """Tighter than the old two-snapshot stability check (shape holds twice,
+    0.4s apart): that's necessary but not sufficient, since the bottom of
+    MEM1's OS-reserved area (see ITEMHANDLER_REGIONS) satisfied it too --
+    it's just as structurally stable as real ITEMHandler, because it's
+    STATIC. It never changes, period. Real ITEMHandler during an actual
+    race practically always will, somewhere in its 0x70 bytes, within a
+    couple seconds -- MKW races have up to 12 racers, and it's vanishingly
+    unlikely none of them touch an item for that whole window. So this now
+    additionally requires the raw bytes to NOT be byte-for-byte identical
+    before vs. after the wait: shape-holds-but-never-changes is exactly the
+    signature of a coincidentally-shaped static table, not a live object."""
+    try:
+        before = dme.read_bytes(addr, ITEMHANDLER_SCAN_SIZE)
+    except Exception:
         return False
-    time.sleep(0.4)
-    return _itemhandler_snapshot_ok(addr)
+    shape_ok, _ = _itemhandler_shape_ok(before)
+    if not shape_ok:
+        return False
+
+    time.sleep(ITEMHANDLER_VERIFY_WINDOW_S)
+
+    try:
+        after = dme.read_bytes(addr, ITEMHANDLER_SCAN_SIZE)
+    except Exception:
+        return False
+    shape_ok, _ = _itemhandler_shape_ok(after)
+    if not shape_ok:
+        return False
+
+    return before != after
 
 
 def find_itemhandler_candidates():
@@ -400,7 +444,8 @@ def find_itemhandler_candidates():
     shape filter BEFORE that recheck, across both regions -- kept separate
     so a zero-candidates result can say which stage failed; capped is True
     if raw_hit_count exceeded ITEMHANDLER_MAX_VERIFY and the slow per-
-    candidate verify (0.4s sleep each) was cut off before checking all of
+    candidate verify (ITEMHANDLER_VERIFY_WINDOW_S sleep each, now also
+    checking liveliness, not just shape) was cut off before checking all of
     them. That cap exists because it's exactly what hung the tracker live:
     a filter that still matches more than a handful of addresses turns the
     "verify everything" loop into a multi-minute block on the main race
