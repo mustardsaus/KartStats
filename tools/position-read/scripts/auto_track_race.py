@@ -190,6 +190,18 @@ PLAYER_DUMP_INTERVAL_S = 1.0
 #   MKW_DUMP_PLAYERS=1 python scripts/auto_track_race.py ...
 DUMP_ALL_PLAYERS = bool(os.environ.get("MKW_DUMP_PLAYERS"))
 
+# Same idea as DUMP_ALL_PLAYERS, for ITEMHandler's recvPackets[0..11]: live
+# testing got exactly one (wrong-looking) "got item" event then nothing
+# else all race, which could mean several different things (wrong
+# itemhandler_addr entirely, wrong item_player_id slot for the local
+# player, or a real address/slot that just isn't being written the way
+# assumed) -- rather than guess which, this dumps every slot's raw state
+# side by side so it can be read off empirically against what's actually
+# picked up on screen, the same way read_all_players solved the
+# local/CPU/remote slot-mapping question. Off by default:
+#   MKW_DUMP_ITEMS=1 python scripts/auto_track_race.py ...
+DUMP_ALL_ITEMS = bool(os.environ.get("MKW_DUMP_ITEMS"))
+
 # --- Item state (ITEMHandler), from itemhandler.h + the tockdom wiki's --------
 # MKWii_Network_Protocol/ITEM page (which itemhandler.h itself cites, and which
 # has the actual byte layout of ITEMPacket that itemhandler.h doesn't inline).
@@ -403,6 +415,28 @@ def read_item_box(itemhandler_addr: int, player_id: int):
     except Exception:
         return None
     return item_id, mode
+
+
+def read_all_item_slots(itemhandler_addr: int, max_slots: int = MAX_PLAYER_SLOTS):
+    """Diagnostic mirror of read_all_players: reads recvPackets[0..max_slots)
+    off a CONFIRMED itemhandler_addr and returns (slot, item_box, item_tail,
+    mode, tail_mode, ack) for each. Lets a wrong "got item" report be cross-
+    checked empirically -- does ANY slot's item_box actually track what was
+    picked up on screen, and is it the slot item_player_id pointed at or a
+    different one -- instead of guessing at a fix blind."""
+    out = []
+    for slot in range(max_slots):
+        packet_addr = itemhandler_addr + ITEMHANDLER_OFF_RECV_PACKETS + slot * ITEM_RECORD_SIZE
+        try:
+            item_box = dme.read_byte(packet_addr + ITEMPACKET_OFF_ITEM_BOX)
+            item_tail = dme.read_byte(packet_addr + ITEMPACKET_OFF_ITEM_TAIL)
+            mode = dme.read_byte(packet_addr + ITEMPACKET_OFF_MODE)
+            tail_mode = dme.read_byte(packet_addr + ITEMPACKET_OFF_TAIL_MODE)
+            ack = dme.read_byte(packet_addr + ITEMPACKET_OFF_ACKNOWLEDGE)
+        except Exception:
+            continue
+        out.append((slot, item_box, item_tail, mode, tail_mode, ack))
+    return out
 
 
 def _item_suffix(itemhandler_addr, player_id: int) -> str:
@@ -1133,14 +1167,28 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, i
     so holding one item for a while only logs the one pickup, not every poll
     tick. Going back to "no item" (used/thrown) is tracked silently, not
     printed, since the ask was "record which powerups we got", not every
-    use. Also prints a full all-slots dump every PLAYER_DUMP_INTERVAL_S --
-    purely a multiplayer slot-mapping diagnostic, see read_all_players.
+    use. Each pickup event also dumps every recvPackets[] slot's raw
+    item_box/mode alongside it -- a wrong-looking pickup is otherwise
+    unfalsifiable; this at least shows whether some OTHER slot's value
+    actually matches what was really picked up (wrong item_player_id) or
+    none do (wrong itemhandler_addr / not really ITEMHandler). Also prints
+    a full all-slots dump every PLAYER_DUMP_INTERVAL_S for players (opt-in,
+    MKW_DUMP_PLAYERS) and separately for items (opt-in, MKW_DUMP_ITEMS) --
+    see read_all_players / read_all_item_slots.
     Returns ((pos, lap, maxlap), reason)."""
     last = None
     stale = 0
     next_dump = time.time()
+    next_item_dump = time.time()
     item_player_id = _local_item_player_id(player_addr)
     last_item_id = None
+
+    if itemhandler_addr is not None:
+        # Low-noise but prints every race: which recvPackets[] slot we think
+        # is the local player, and that slot's state right now, so a wrong
+        # read is traceable back to "wrong slot" vs "wrong address" without
+        # needing MKW_DUMP_ITEMS turned on.
+        print(f"[race {race_num}] item_player_id resolved to {item_player_id}", flush=True)
 
     first = read_player(player_addr)
     if first is not None:
@@ -1181,12 +1229,32 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, i
                 item_id, mode = item_result
                 if item_id != last_item_id:
                     if item_id != 0x14:  # 0x14 = "(no item)" -- a use/throw, not a pickup
+                        # Alongside the event itself, dump every slot's raw
+                        # item_box right now -- live testing got exactly one
+                        # wrong-looking event and then silence, and this is
+                        # the data needed to tell whether a DIFFERENT slot
+                        # actually tracks real pickups (wrong item_player_id)
+                        # or whether none of them do (wrong itemhandler_addr
+                        # entirely / not really ITEMHandler).
+                        all_slots = read_all_item_slots(itemhandler_addr)
+                        slots_desc = " | ".join(
+                            f"slot{s}: {item_name(ib)}(mode={m})" for s, ib, it, m, tm, a in all_slots
+                        )
                         print(
-                            f"[race {race_num}] got item: {item_name(item_id)}  "
-                            f"(position {pos}, lap {lap}/{STANDARD_LAP_COUNT})",
+                            f"[race {race_num}] got item: {item_name(item_id)} (mode={mode})  "
+                            f"(position {pos}, lap {lap}/{STANDARD_LAP_COUNT})\n"
+                            f"  all item slots right now -- {slots_desc or '(none readable)'}",
                             flush=True,
                         )
                     last_item_id = item_id
+
+        if DUMP_ALL_ITEMS and itemhandler_addr is not None and time.time() >= next_item_dump:
+            all_slots = read_all_item_slots(itemhandler_addr)
+            slots_desc = " | ".join(
+                f"slot{s}: {item_name(ib)}(mode={m})" for s, ib, it, m, tm, a in all_slots
+            )
+            print(f"[race {race_num}] all item slots -- {slots_desc or '(none readable)'}", flush=True)
+            next_item_dump = time.time() + PLAYER_DUMP_INTERVAL_S
 
         if DUMP_ALL_PLAYERS and time.time() >= next_dump:
             players_ptr = read_ptr(raceinfo_addr + RACEINFO_OFF_PLAYERS)
