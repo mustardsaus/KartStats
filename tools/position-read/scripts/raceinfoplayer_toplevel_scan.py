@@ -46,6 +46,7 @@ import auto_track_race as atr  # noqa: E402
 dme = atr.dme
 
 DUMP_WORD_COUNT = 48  # covers RaceinfoPlayer+0x0 .. +0xBC
+NESTED_DUMP_WORD_COUNT = 24  # how far into a standout MEM2 pointer to look
 
 LOG_PATH = Path(__file__).resolve().parent.parent / "raceinfoplayer_toplevel_scan_log.txt"
 
@@ -68,6 +69,19 @@ def is_valid_ptr(v) -> bool:
     if v is None:
         return False
     return (0x80000000 <= v < 0x81800000) or (0x90000000 <= v < 0x94000000)
+
+
+def is_mem2_ptr(v) -> bool:
+    """MEM2 pointers are the interesting outliers among RaceinfoPlayer's
+    top-level fields: every real run so far has shown 8-9 MEM1 pointers
+    that are all just nearby sibling-RaceinfoPlayer/vtable/resource-
+    string addresses a few hundred bytes from RaceinfoPlayer itself, and
+    then exactly ONE MEM2 pointer that doesn't fit that pattern at all.
+    MEM2 is where most per-race heap allocations (unlike the mostly-
+    static lower MEM1 region) actually live, so it's worth a closer,
+    one-level-deeper look regardless of whether the naive Player offset
+    chain-resolved."""
+    return v is not None and 0x90000000 <= v < 0x94000000
 
 
 def read_u32(addr: int):
@@ -216,6 +230,14 @@ def main() -> None:
                     f"-- chains to playerSub10=0x{result['player_sub10']:08X} but values look wrong: "
                     f"star={result['star']} shock={result['shock']} mega={result['mega']} mult={result['mult']}"
                 )
+
+            if is_mem2_ptr(value):
+                emit(
+                    f"    -- 0x{value:08X} is a MEM2 pointer (everything else above is MEM1), "
+                    f"dumping its own first {NESTED_DUMP_WORD_COUNT} words for a closer look:"
+                )
+                for n_offset, n_value, n_is_ptr in dump_words(value, NESTED_DUMP_WORD_COUNT):
+                    emit(f"      +0x{n_offset:02X}: 0x{n_value:08X} (valid ptr: {n_is_ptr})")
 
         if not hits:
             emit(
