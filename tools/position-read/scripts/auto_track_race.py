@@ -286,6 +286,29 @@ ITEMPACKET_FIELDS = [
     ("ack_timer", ITEMPACKET_OFF_ACK_TIMER),
 ]
 
+# "timer" is documented as "RACE.timer/8" -- a live race-clock snapshot
+# re-stamped into this packet continuously for netcode sync, not something
+# that only changes on a real item event. "ack_timer" ("return the timer
+# value to accept item of other client") is the same clock-like shape.
+# Live testing confirmed it: with these included, the tracker printed a
+# line almost every single poll tick for the whole race, drowning out the
+# handful of genuinely rare item_box/item_tail/mode/tail_mode/acknowledge
+# changes we actually care about. Skipped entirely (not printed, not even
+# logged to history) rather than just filtered from the live print, so the
+# end-of-race summary doesn't balloon either.
+NOISY_ITEMPACKET_FIELDS = {"timer", "ack_timer"}
+
+# The raw player-struct window scan (PLAYER_ITEM_SCAN_SIZE) below already
+# did its job in race 1 -- it's what told us the held item ISN'T stored
+# inline in RaceinfoPlayer, and what turned up the roulette-spin offsets
+# now explained by item_box. It still runs (offset_history feeds the
+# end-of-race summary, in case the ITEMHandler path above doesn't pan out
+# either), but those roulette-spin offsets alone cycle through the whole
+# item enum continuously all race, which -- live-printed every tick --
+# was the other big source of the output flood. Off by default now; the
+# full history is still in the end-of-race summary either way.
+VERBOSE_PLAYER_WINDOW = bool(os.environ.get("MKW_VERBOSE_PLAYER_WINDOW"))
+
 # The real item enum only covers 0x00-0x12 (see ITEM_NAMES below); any byte
 # outside that range isn't a plausible item id.
 HELD_ITEM_MIN = 0x00
@@ -1073,7 +1096,7 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
                     offset = int(i)
                     new_val = int(cur_window[i])
                     offset_history.setdefault(offset, []).append((elapsed, new_val))
-                    if HELD_ITEM_MIN <= new_val <= HELD_ITEM_MAX:
+                    if VERBOSE_PLAYER_WINDOW and HELD_ITEM_MIN <= new_val <= HELD_ITEM_MAX:
                         print(
                             f"[race {race_num}] player+0x{offset:02X} -> {item_name(new_val)} "
                             f"(0x{new_val:02X})  (t={elapsed}s, position {pos}, lap {lap}/{STANDARD_LAP_COUNT})",
@@ -1099,6 +1122,8 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
                     if cur_packet is not None:
                         if prev_item_packet is not None and len(cur_packet) == len(prev_item_packet) == ITEMPACKET_SIZE:
                             for name, off in ITEMPACKET_FIELDS:
+                                if name in NOISY_ITEMPACKET_FIELDS:
+                                    continue
                                 old_v, new_v = prev_item_packet[off], cur_packet[off]
                                 if old_v != new_v:
                                     item_packet_history.setdefault(name, []).append((elapsed, new_v))
