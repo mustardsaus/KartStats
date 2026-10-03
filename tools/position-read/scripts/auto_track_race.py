@@ -265,8 +265,46 @@ SCAN_PLAYER_ITEM = bool(os.environ.get("MKW_SCAN_PLAYER_ITEM"))
 # This is a sourced, named target rather than a blind pointer search --
 # same play-a-race-and-report-the-sequence verification as before, just
 # watching this specific documented packet instead of guessing.
+#
+# UPDATE after live testing: ITEMHANDLER_SINSTANCE_ADDR, taken straight off
+# the wiki, never resolved to anything valid across two full races (no
+# "found ITEMHandler" line ever printed). That's exactly the failure mode
+# Raceinfo::sInstance already taught us about: its own published PAL
+# address (0x809bd730) is NOT the same as this build's real NTSC-U address
+# (0x809B8F70, only found by empirically scanning this exact game/Dolphin
+# session) -- static data addresses shift between regions even when struct
+# OFFSETS (which only depend on the compiler, not the region) stay
+# identical. mkw-structures' field offsets have been correct every time;
+# its absolute addresses have no such track record for NTSC-U specifically.
+#
+# Rather than guess a "corrected" address (region deltas aren't guaranteed
+# to be a constant across every static symbol, and guessing addresses is
+# exactly what this project keeps learning not to do), find_itemhandler_addr
+# below verifies CONTENT instead: it checks whether a candidate address
+# actually has the right shape (12 ITEMPackets with item_box/item_tail <=
+# 0x14 and mode <= 7 -- the full documented value ranges -- and at least
+# one nonzero byte, to rule out blank/zeroed memory) before trusting it,
+# tries the published static address first since it's free if it happens
+# to be right, and falls back to a full structural scan of RAM (the same
+# technique that originally found Raceinfo, before its fast path existed)
+# if it isn't.
 ITEMHANDLER_SINSTANCE_ADDR = 0x809C20F8
 ITEMHANDLER_OFF_RECV_PACKETS = 0x10
+ITEMHANDLER_RECV_PACKET_COUNT = 12
+ITEM_OR_EMPTY_MAX = 0x14   # valid item ids (0x00-0x12) plus "(no item)" (0x14)
+ITEMPACKET_MODE_MAX = 7    # "activation mode: 0=no item, 1-7=handshake" per tockdom
+# The structural scan reads all of RAM, so it's not something to repeat
+# every poll tick -- retry on this cadence until it succeeds, then it's
+# cached for the rest of the race (the object shouldn't move mid-race).
+ITEMHANDLER_RETRY_INTERVAL_S = 2.0
+# All 12 recvPackets share the same global race clock (timer := RACE.timer/8
+# per tockdom), so real packets' timer bytes should sit close together.
+# Added after a synthetic test of the scan below caught it producing
+# "echo" false positives a few bytes to either side of a planted real
+# block -- windows that happen to satisfy the item_box/item_tail/mode
+# range checks via coincidental overlap, but have no reason to also share
+# a clock value across all 12 slots the way the genuine object does.
+TIMER_CLUSTER_MAX_SPREAD = 32
 ITEMPACKET_SIZE = 0x8
 ITEMPACKET_OFF_TIMER = 0x0
 ITEMPACKET_OFF_ITEM_BOX = 0x1   # item currently sitting in the box -- visual only
@@ -340,16 +378,135 @@ def read_player_item_window(player_addr: int):
         return None
 
 
-def read_itemhandler_addr():
-    """ITEMHandler::sInstance, a static pointer slot at a FIXED address in
-    this exact game build (0x809C20F8, from mkw-structures' itemhandler.h)
-    -- the same shape as Raceinfo's SINSTANCE_ADDR fast path above. Returns
-    the live ITEMHandler instance address, or None if it's not valid yet
-    (e.g. not constructed before a race is loaded)."""
+def _itemhandler_shape_ok(addr: int) -> bool:
+    """Reads recvPackets[12] at a candidate ITEMHandler address and checks
+    it actually has the documented shape -- every player's item_box/
+    item_tail <= 0x14 and mode <= 7 all at once (12 * 3 = 36 independent
+    small-range constraints agreeing simultaneously, the same logic
+    scan_region_for_raceinfo already relies on), all 12 timer bytes
+    clustered within TIMER_CLUSTER_MAX_SPREAD of each other (they share one
+    global race clock), plus at least one nonzero byte so a blank/zeroed
+    region of RAM (which trivially passes every "<= N" check, and whose
+    all-zero timers trivially cluster too) doesn't get trusted. Used to
+    verify ANY candidate -- whether it came from the published static
+    address or a fresh scan -- before relying on it."""
+    try:
+        buf = dme.read_bytes(
+            addr + ITEMHANDLER_OFF_RECV_PACKETS, ITEMPACKET_SIZE * ITEMHANDLER_RECV_PACKET_COUNT
+        )
+    except Exception:
+        return False
+    any_nonzero = False
+    timers = []
+    for i in range(ITEMHANDLER_RECV_PACKET_COUNT):
+        base = i * ITEMPACKET_SIZE
+        timer = buf[base + ITEMPACKET_OFF_TIMER]
+        item_box = buf[base + ITEMPACKET_OFF_ITEM_BOX]
+        item_tail = buf[base + ITEMPACKET_OFF_ITEM_TAIL]
+        mode = buf[base + ITEMPACKET_OFF_MODE]
+        if item_box > ITEM_OR_EMPTY_MAX or item_tail > ITEM_OR_EMPTY_MAX or mode > ITEMPACKET_MODE_MAX:
+            return False
+        if item_box or item_tail or mode:
+            any_nonzero = True
+        timers.append(timer)
+    # timer is a uint8 that wraps (RACE.timer/8 overflows every ~34s at
+    # 60fps), so a raw max-min would spuriously look huge right at a wrap
+    # boundary even for genuinely clustered values (e.g. 255 vs 0) -- take
+    # the shorter way around the wrap instead.
+    spread = max(timers) - min(timers)
+    spread = min(spread, 256 - spread)
+    if spread > TIMER_CLUSTER_MAX_SPREAD:
+        return False
+    return any_nonzero
+
+
+def scan_region_for_itemhandler(start: int, end: int):
+    """One vectorized pass over [start, end) for 4-byte-aligned addresses
+    whose recvPackets[12] block has the documented ITEMHandler shape -- see
+    _itemhandler_shape_ok's docstring for the reasoning, including the
+    timer-clustering check added after a synthetic test of this exact
+    function caught it otherwise reporting "echo" false positives a few
+    bytes to either side of a real match. Same technique as
+    scan_region_for_raceinfo, just checked with numpy across the whole
+    region in one shot instead of one Python-level read per candidate."""
+    size = end - start
+    try:
+        buf = dme.read_bytes(start, size)
+    except Exception as exc:
+        print(f"  (couldn't read 0x{start:08X}-0x{end:08X}: {exc})")
+        return [], 0
+
+    arr = np.frombuffer(buf, dtype=np.uint8)
+    block_size = ITEMHANDLER_OFF_RECV_PACKETS + ITEMPACKET_SIZE * ITEMHANDLER_RECV_PACKET_COUNT
+    n = (len(arr) - block_size) // 4 + 1
+    if n <= 0:
+        return [], 0
+
+    mask = np.ones(n, dtype=bool)
+    any_nonzero = np.zeros(n, dtype=bool)
+    timer_min = np.full(n, 255, dtype=np.uint8)
+    timer_max = np.zeros(n, dtype=np.uint8)
+    for i in range(ITEMHANDLER_RECV_PACKET_COUNT):
+        base = ITEMHANDLER_OFF_RECV_PACKETS + i * ITEMPACKET_SIZE
+        timer = _read_u8_field(arr, base + ITEMPACKET_OFF_TIMER, n)
+        item_box = _read_u8_field(arr, base + ITEMPACKET_OFF_ITEM_BOX, n)
+        item_tail = _read_u8_field(arr, base + ITEMPACKET_OFF_ITEM_TAIL, n)
+        mode = _read_u8_field(arr, base + ITEMPACKET_OFF_MODE, n)
+        L = min(len(timer), len(item_box), len(item_tail), len(mode), len(mask))
+        mask = mask[:L] & (item_box[:L] <= ITEM_OR_EMPTY_MAX) & (item_tail[:L] <= ITEM_OR_EMPTY_MAX) & (mode[:L] <= ITEMPACKET_MODE_MAX)
+        any_nonzero = any_nonzero[:L] | (item_box[:L] != 0) | (item_tail[:L] != 0) | (mode[:L] != 0)
+        timer_min = np.minimum(timer_min[:L], timer[:L])
+        timer_max = np.maximum(timer_max[:L], timer[:L])
+
+    L = len(mask)
+    spread = (timer_max[:L].astype(np.int16) - timer_min[:L].astype(np.int16))
+    spread = np.minimum(spread, 256 - spread)  # shorter way around the uint8 wrap
+    mask &= any_nonzero[:L] & (spread <= TIMER_CLUSTER_MAX_SPREAD)
+
+    hits = np.nonzero(mask)[0]
+    return [int(start + i * 4) for i in hits], n
+
+
+def find_itemhandler_candidates():
+    """One-shot structural scan for the ITEMHandler object's content across
+    all of RAM, bypassing ITEMHANDLER_SINSTANCE_ADDR entirely -- the same
+    approach find_raceinfo_candidates() used before Raceinfo's own fast
+    path was confirmed. Slower than trusting a static address, but doesn't
+    require trusting (or guessing a region-corrected version of) a number
+    that already failed to check out."""
+    print("Looking for ITEMHandler (structural scan -- the published address didn't check out)...")
+    all_candidates = []
+    for start, end in REGIONS:
+        t0 = time.time()
+        candidates, n = scan_region_for_itemhandler(start, end)
+        print(f"  0x{start:08X}-0x{end:08X}: {len(candidates)} raw hit(s) of {n} checked, {time.time() - t0:.2f}s")
+        all_candidates.extend(candidates)
+    return all_candidates
+
+
+def find_itemhandler_addr():
+    """Locates the live ITEMHandler object, verifying content shape rather
+    than trusting any address blindly. Tries the published static pointer
+    first (free if it happens to be right for this build), falls back to a
+    full structural scan of RAM if it doesn't check out. Returns the
+    address, or None if nothing conclusive was found this attempt (caller
+    retries later -- recvPackets may still be all-zero early in a race)."""
     addr = read_ptr(ITEMHANDLER_SINSTANCE_ADDR)
-    if addr is None or not (0x80000000 <= addr < 0x81800000 or 0x90000000 <= addr < 0x94000000):
-        return None
-    return addr
+    if addr is not None and (0x80000000 <= addr < 0x81800000 or 0x90000000 <= addr < 0x94000000):
+        if _itemhandler_shape_ok(addr):
+            print(f"ITEMHandler::sInstance (0x{ITEMHANDLER_SINSTANCE_ADDR:08X}) -> 0x{addr:08X} -- shape check passed")
+            return addr
+
+    candidates = find_itemhandler_candidates()
+    if len(candidates) == 1:
+        print(f"Found ITEMHandler at 0x{candidates[0]:08X}")
+        return candidates[0]
+    if len(candidates) == 0:
+        print("  no candidates this attempt (recvPackets may still be all-zero -- will retry)")
+    else:
+        shown = ", ".join(f"0x{c:08X}" for c in candidates[:20])
+        print(f"  {len(candidates)} candidates, too ambiguous to pick one: {shown}")
+    return None
 
 
 def read_item_packet(itemhandler_addr: int, player_id: int):
@@ -1051,7 +1208,8 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
     offset_history = {}  # offset -> [(elapsed_s, value), ...] -- only this race, printed at the end
     prev_item_packet = None
     item_packet_history = {}  # field_name -> [(elapsed_s, value), ...]
-    itemhandler_seen = False  # print the "found it" line once, not every tick
+    itemhandler_addr = None
+    next_itemhandler_attempt = 0.0  # try immediately on the first SCAN_PLAYER_ITEM tick
 
     first = read_player(player_addr)
     if first is not None:
@@ -1104,15 +1262,17 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
                         )
             prev_window = cur_window
 
-            # ITEMHandler::sInstance path -- see the "Held item, step 2" comment
-            # block above read_itemhandler_addr for why this is the sourced,
-            # named target (recvPackets[localId].item_tail) rather than the
-            # blind byte scan above.
-            itemhandler_addr = read_itemhandler_addr()
+            # ITEMHandler path -- see the "Held item, step 2" comment block
+            # above ITEMHANDLER_SINSTANCE_ADDR for why this verifies content
+            # (recvPackets[localId].item_tail) rather than trusting the
+            # published static address blindly. find_itemhandler_addr does a
+            # full-RAM scan when the static address doesn't check out, so
+            # it's only attempted periodically, not every tick.
+            if itemhandler_addr is None and time.time() >= next_itemhandler_attempt:
+                itemhandler_addr = find_itemhandler_addr()
+                next_itemhandler_attempt = time.time() + ITEMHANDLER_RETRY_INTERVAL_S
+
             if itemhandler_addr is not None:
-                if not itemhandler_seen:
-                    itemhandler_seen = True
-                    print(f"[race {race_num}] found ITEMHandler at 0x{itemhandler_addr:08X}", flush=True)
                 try:
                     local_id = dme.read_byte(player_addr + PLAYER_OFF_ID)
                 except Exception:
