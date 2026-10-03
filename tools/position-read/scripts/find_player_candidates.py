@@ -34,6 +34,22 @@ plus MEM2, skipping the lower MEM1 range where code/static data (and
 most of those dense vtable tables) actually live -- PlayerSub10 is a
 per-race heap allocation, not a static.
 
+Even so, a real run against this game's actual (very densely-packed-
+looking) memory still turned up 27,431 candidates passing all four
+value constraints at once -- down from v1's 82,741, but still far too
+many to usefully live-watch. The same lesson that actually cracked
+Raceinfo::sInstance applies again: shape alone isn't enough, it takes
+shape PLUS a temporal/stability check. So this version adds one more
+pass before anything gets printed or watched: re-read every raw
+candidate's four fields several times over about a second and keep
+ONLY the ones that stay bit-for-bit IDENTICAL the whole time. A real,
+currently-idle PlayerSub10 (no star/shock/mega/boost active) sits
+motionless frame to frame; the vast majority of incidentally-matching
+floats and ints in a live physics/audio/animation engine do not. This
+step requires the player to not use any item for about a second right
+after the scan -- the live-watch phase (where you actually DO use
+items) only starts afterward, against the narrowed-down survivors.
+
 Usage:
     python scripts/find_player_candidates.py
 Get into a race. Finds PlayerSub10-shaped candidates once (should be a
@@ -97,6 +113,14 @@ HEAP_REGIONS = [
 
 WATCH_DURATION_S = 60.0
 POLL_INTERVAL_S = 0.2
+
+# Temporal-stability filter (runs once, right after the raw shape scan,
+# before anything is printed or watched): a real idle PlayerSub10 must
+# read back bit-identical across every one of these rounds. Needs the
+# player to not use any item for roughly (STABILITY_ROUNDS - 1) *
+# STABILITY_INTERVAL_S seconds.
+STABILITY_ROUNDS = 6
+STABILITY_INTERVAL_S = 0.25
 
 LOG_PATH = Path(__file__).resolve().parent.parent / "player_candidates_log.txt"
 
@@ -164,6 +188,74 @@ def find_playersub10_candidates():
     for start, end in HEAP_REGIONS:
         found.extend(scan_region_for_playersub10_shape(start, end))
     return found
+
+
+def _gather_i16_at(arr: np.ndarray, offsets: np.ndarray) -> np.ndarray:
+    """Big-endian signed int16 values at each of `offsets` into `arr`
+    (arbitrary, non-strided positions -- unlike _read_i16_field_stride4,
+    which assumes a uniform stride)."""
+    if len(offsets) == 0:
+        return np.array([], dtype=np.int16)
+    pairs = np.stack([arr[offsets], arr[offsets + 1]], axis=1)
+    return np.frombuffer(pairs.tobytes(), dtype=">i2")
+
+
+def _gather_f32_at(arr: np.ndarray, offsets: np.ndarray) -> np.ndarray:
+    """Big-endian float32 values at each of `offsets` into `arr`."""
+    if len(offsets) == 0:
+        return np.array([], dtype=np.float32)
+    quads = np.stack([arr[offsets], arr[offsets + 1], arr[offsets + 2], arr[offsets + 3]], axis=1)
+    return np.frombuffer(quads.tobytes(), dtype=">f4")
+
+
+def read_candidate_snapshots(candidates) -> dict:
+    """Bulk-reads whichever HEAP_REGIONS actually contain candidates and
+    extracts all 4 fields for every candidate in one vectorized pass per
+    region -- so checking thousands of candidates costs ~1 memory read
+    per region, not one read per candidate. Returns {addr: (star, shock,
+    mega, mult)}; an address whose region couldn't be read is omitted."""
+    snapshots = {}
+    for start, end in HEAP_REGIONS:
+        in_region = [a for a in candidates if start <= a < end]
+        if not in_region:
+            continue
+        try:
+            buf = dme.read_bytes(start, end - start)
+        except Exception:
+            continue
+        arr = np.frombuffer(buf, dtype=np.uint8)
+        offs = np.array([a - start for a in in_region], dtype=np.int64)
+
+        star = _gather_i16_at(arr, offs + OFF_STAR_TIMER)
+        shock = _gather_i16_at(arr, offs + OFF_SHOCK_TIMER)
+        mega = _gather_i16_at(arr, offs + OFF_MEGA_TIMER)
+        mult = _gather_f32_at(arr, offs + OFF_BOOST_MULTIPLIER)
+
+        for i, addr in enumerate(in_region):
+            snapshots[addr] = (int(star[i]), int(shock[i]), int(mega[i]), float(mult[i]))
+    return snapshots
+
+
+def filter_stable_candidates(candidates, rounds: int = STABILITY_ROUNDS, interval_s: float = STABILITY_INTERVAL_S):
+    """Across `rounds` bulk re-reads spaced `interval_s` apart, keeps only
+    candidates whose 4 fields read back bit-identical every single time.
+    A real, currently-idle PlayerSub10 sits motionless when no boost is
+    active; almost everything else that incidentally passed the raw
+    value-range scan keeps changing frame to frame (physics, audio,
+    animation blending, etc.), so this is expected to collapse tens of
+    thousands of raw candidates down to a small, trustworthy handful."""
+    if not candidates or rounds <= 1:
+        return list(candidates)
+    alive = set(candidates)
+    prev = read_candidate_snapshots(sorted(alive))
+    for _ in range(rounds - 1):
+        time.sleep(interval_s)
+        cur = read_candidate_snapshots(sorted(alive))
+        alive = {a for a in alive if a in cur and a in prev and cur[a] == prev[a]}
+        prev = cur
+        if not alive:
+            break
+    return sorted(alive)
 
 
 def field_addrs(playersub10_addr: int) -> dict:
@@ -236,9 +328,19 @@ def main() -> None:
         "(star/shock/mega timers + boost multiplier all plausible at once)..."
     )
     t0 = time.time()
-    candidates = find_playersub10_candidates()
-    print(f"{len(candidates)} candidate(s) found in {time.time() - t0:.2f}s.")
-    lines.append(f"{len(candidates)} PlayerSub10-shaped candidate(s) found")
+    raw_candidates = find_playersub10_candidates()
+    print(f"{len(raw_candidates)} raw candidate(s) found in {time.time() - t0:.2f}s.")
+    lines.append(f"{len(raw_candidates)} raw PlayerSub10-shaped candidate(s) found")
+
+    stability_window_s = (STABILITY_ROUNDS - 1) * STABILITY_INTERVAL_S
+    print(
+        f"\nVerifying stability of {len(raw_candidates)} candidate(s) over ~{stability_window_s:.1f}s "
+        "-- don't use any item right now, this step needs you idle..."
+    )
+    t0 = time.time()
+    candidates = filter_stable_candidates(raw_candidates)
+    print(f"{len(candidates)} candidate(s) stayed perfectly stable (down from {len(raw_candidates)}) in {time.time() - t0:.2f}s.")
+    lines.append(f"{len(raw_candidates)} raw -> {len(candidates)} stable after temporal check")
 
     resolved = {}
     for addr in candidates:
