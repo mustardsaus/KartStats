@@ -293,10 +293,6 @@ ITEMHANDLER_OFF_RECV_PACKETS = 0x10
 ITEMHANDLER_RECV_PACKET_COUNT = 12
 ITEM_OR_EMPTY_MAX = 0x14   # valid item ids (0x00-0x12) plus "(no item)" (0x14)
 ITEMPACKET_MODE_MAX = 7    # "activation mode: 0=no item, 1-7=handshake" per tockdom
-# The structural scan reads all of RAM, so it's not something to repeat
-# every poll tick -- retry on this cadence until it succeeds, then it's
-# cached for the rest of the race (the object shouldn't move mid-race).
-ITEMHANDLER_RETRY_INTERVAL_S = 2.0
 # All 12 recvPackets share the same global race clock (timer := RACE.timer/8
 # per tockdom), so real packets' timer bytes should sit close together.
 # Added after a synthetic test of the scan below caught it producing
@@ -1209,7 +1205,7 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
     prev_item_packet = None
     item_packet_history = {}  # field_name -> [(elapsed_s, value), ...]
     itemhandler_addr = None
-    next_itemhandler_attempt = 0.0  # try immediately on the first SCAN_PLAYER_ITEM tick
+    itemhandler_scan_done = False  # one attempt per race -- see the call site's comment
 
     first = read_player(player_addr)
     if first is not None:
@@ -1264,13 +1260,18 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
 
             # ITEMHandler path -- see the "Held item, step 2" comment block
             # above ITEMHANDLER_SINSTANCE_ADDR for why this verifies content
-            # (recvPackets[localId].item_tail) rather than trusting the
-            # published static address blindly. find_itemhandler_addr does a
-            # full-RAM scan when the static address doesn't check out, so
-            # it's only attempted periodically, not every tick.
-            if itemhandler_addr is None and time.time() >= next_itemhandler_attempt:
+            # rather than trusting the published static address blindly.
+            # ONE attempt per race, not a retry loop: live testing showed the
+            # fallback full-RAM scan returning 100,000+ ambiguous candidates
+            # on real game memory (structured zero/sparse regions pass the
+            # range checks far more often than the synthetic random-noise
+            # test anticipated) -- repeating that every couple seconds just
+            # re-finds the same huge, unusable set while flooding the
+            # terminal and burning real CPU. Retrying can't fix a
+            # fundamentally too-weak fingerprint, so don't retry.
+            if itemhandler_addr is None and not itemhandler_scan_done:
                 itemhandler_addr = find_itemhandler_addr()
-                next_itemhandler_attempt = time.time() + ITEMHANDLER_RETRY_INTERVAL_S
+                itemhandler_scan_done = True
 
             if itemhandler_addr is not None:
                 try:
