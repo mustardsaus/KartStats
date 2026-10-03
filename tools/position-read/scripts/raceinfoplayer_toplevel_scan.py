@@ -97,23 +97,37 @@ def dump_words(base: int, count: int):
     return out
 
 
-def chain_check(player_candidate: int):
+def chain_check(player_candidate: int) -> dict:
     """Tries Player(player_candidate)->playerSub->playerSub10 and
-    returns a dict of the resolved fields if every step along the way
-    looks structurally sane, else None."""
+    ALWAYS returns a diagnostic dict, even on failure -- unlike a plain
+    pass/fail, this lets a failed chain still be printed and inspected
+    (which stage it died at, what the garbage value actually was)
+    instead of silently vanishing, the same way raceinfo_toplevel_scan.py
+    falls back to a raw dump instead of just saying "nothing matched"."""
     player_sub = read_u32(player_candidate + PLAYER_OFF_PLAYERSUB)
     if not is_valid_ptr(player_sub):
-        return None
+        return {"stage": "no_player_sub", "player_sub": player_sub, "plausible": False}
+
     player_sub10 = read_u32(player_sub + PLAYERSUB_OFF_PLAYERSUB10)
     if not is_valid_ptr(player_sub10):
-        return None
+        return {
+            "stage": "no_player_sub10",
+            "player_sub": player_sub,
+            "player_sub10": player_sub10,
+            "plausible": False,
+        }
 
     star = read_i16(player_sub10 + OFF_STAR_TIMER)
     shock = read_i16(player_sub10 + OFF_SHOCK_TIMER)
     mega = read_i16(player_sub10 + OFF_MEGA_TIMER)
     mult = read_f32(player_sub10 + OFF_BOOST_MULTIPLIER)
     if None in (star, shock, mega, mult):
-        return None
+        return {
+            "stage": "unreadable_fields",
+            "player_sub": player_sub,
+            "player_sub10": player_sub10,
+            "plausible": False,
+        }
 
     plausible = (
         TIMER_MIN <= star <= TIMER_MAX
@@ -122,6 +136,7 @@ def chain_check(player_candidate: int):
         and MULT_MIN <= mult <= MULT_MAX
     )
     return {
+        "stage": "ok" if plausible else "implausible_values",
         "player_sub": player_sub,
         "player_sub10": player_sub10,
         "star": star,
@@ -153,20 +168,48 @@ def main() -> None:
 
     hits = []
     for offset, value, is_ptr in words:
-        marker = ""
-        result = None
-        if is_ptr:
-            result = chain_check(value)
-            if result is not None and result["plausible"]:
-                marker = "  <-- chain-resolves to a plausible Player/PlayerSub10!"
-                hits.append((offset, value, result))
-        print(f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: {is_ptr}){marker}")
+        if not is_ptr:
+            print(f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: False)")
+            continue
+
+        result = chain_check(value)
+        stage = result["stage"]
+        if stage == "ok":
+            print(
+                f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
+                f"<-- chain-resolves to a plausible Player/PlayerSub10!"
+            )
+            hits.append((offset, value, result))
+        elif stage == "no_player_sub":
+            print(
+                f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
+                f"-- +0x10 (playerSub?) = 0x{result['player_sub']:08X}, not a valid pointer"
+            )
+        elif stage == "no_player_sub10":
+            print(
+                f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
+                f"-- playerSub=0x{result['player_sub']:08X}, but +0xC (playerSub10?) = "
+                f"0x{result['player_sub10']:08X}, not a valid pointer"
+            )
+        elif stage == "unreadable_fields":
+            print(
+                f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
+                f"-- playerSub=0x{result['player_sub']:08X}, playerSub10=0x{result['player_sub10']:08X}, "
+                f"but couldn't read its star/shock/mega/mult fields"
+            )
+        else:  # implausible_values
+            print(
+                f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
+                f"-- chains to playerSub10=0x{result['player_sub10']:08X} but values look wrong: "
+                f"star={result['star']} shock={result['shock']} mega={result['mega']} mult={result['mult']}"
+            )
 
     if not hits:
         print(
             "\nNo top-level field of RaceinfoPlayer chain-resolved to a plausible "
-            "Player/PlayerSub10. Either RaceinfoPlayer doesn't hold a forward "
-            "pointer to Player within the first "
+            "Player/PlayerSub10 (see the per-field notes above for where each one "
+            "failed). Either RaceinfoPlayer doesn't hold a forward pointer to "
+            "Player within the first "
             f"0x{DUMP_WORD_COUNT * 4:X} bytes, or the Player/PlayerSub offsets "
             "need rechecking."
         )
