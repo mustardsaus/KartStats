@@ -250,6 +250,27 @@ ITEMPACKET_OFF_ACK_TIMER = 0x06
 # tracker for more than a few seconds.
 ITEMHANDLER_MAX_VERIFY = 25
 
+# Live data from a real race pinned the actual problem the hang-fix above
+# wasn't enough for: 23754 raw hits survived even the all-zero rejection,
+# and the one actually used (first of the 25 checked) was 0x80002380 --
+# every one of the 25 survivors landed between 0x80002380 and 0x80006540,
+# all packed into the bottom 32KB of MEM1. Reading all 12 "slots" there
+# printed Green Shell/mode=0 across the board the whole race, which is
+# exactly what reading static near-zero memory looks like. That low band
+# of MEM1 is the Wii's OS-reserved/IPL area (interrupt vectors, debugger
+# info, OS globals) -- known platform fact, not a guess -- dense with
+# small repeating integers and zero bytes, i.e. exactly the shape this
+# filter is loose enough to match by coincidence. It is NOT where any
+# heap-allocated game object lives; Raceinfo's own heap object, for
+# comparison, has only ever been observed up around 0x8111xxxx. Carving
+# this reserved band out of the scanned range is a direct response to
+# where these real false positives actually landed, not a guess at where
+# the real ITEMHandler is.
+ITEMHANDLER_REGIONS = [
+    (0x80010000, 0x81800000),  # MEM1, OS-reserved low band excluded
+    (0x90000000, 0x94000000),  # MEM2, unchanged
+]
+
 ITEM_NAMES = {
     0x00: "Green Shell", 0x01: "Red Shell", 0x02: "Banana", 0x03: "Fake Item Box",
     0x04: "Mushroom", 0x05: "Triple Mushroom", 0x06: "Bob-omb", 0x07: "Spiny Shell",
@@ -385,12 +406,14 @@ def find_itemhandler_candidates():
     "verify everything" loop into a multi-minute block on the main race
     loop, with nothing printed (not even positions) the whole time it's
     stuck. Printed scan stats happen in ensure_itemhandler_addr, right
-    after this returns -- not buried after the slow part."""
+    after this returns -- not buried after the slow part. Scans
+    ITEMHANDLER_REGIONS (not the shared REGIONS used for Raceinfo) -- see
+    that constant's comment for why the bottom of MEM1 is excluded here."""
     found = []
     raw_hit_count = 0
     verified = 0
     capped = False
-    for start, end in REGIONS:
+    for start, end in ITEMHANDLER_REGIONS:
         raw_hits = scan_region_for_itemhandler(start, end)
         raw_hit_count += len(raw_hits)
         for addr in raw_hits:
