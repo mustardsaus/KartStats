@@ -44,6 +44,7 @@ Usage:
 Ctrl+C to stop.
 """
 
+import os
 import sys
 import time
 
@@ -183,6 +184,11 @@ STANDARD_LAP_COUNT = 3
 # below, the multiplayer slot-mapping diagnostic.
 MAX_PLAYER_SLOTS = 12
 PLAYER_DUMP_INTERVAL_S = 1.0
+# The all-slots dump is noisy and only useful for the one-time job of
+# mapping which slot index is which real player in local split-screen --
+# off by default so solo play stays quiet. Turn it on with:
+#   MKW_DUMP_PLAYERS=1 python scripts/auto_track_race.py ...
+DUMP_ALL_PLAYERS = bool(os.environ.get("MKW_DUMP_PLAYERS"))
 
 
 def hook_with_retry(timeout_s: float = 30.0) -> None:
@@ -882,11 +888,11 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
                 print(f"[race {race_num}] lap {lap}/{STANDARD_LAP_COUNT}  (position {pos})", flush=True)
         last = cur
 
-        if time.time() >= next_dump:
+        if DUMP_ALL_PLAYERS and time.time() >= next_dump:
             players_ptr = read_ptr(raceinfo_addr + RACEINFO_OFF_PLAYERS)
             slots = read_all_players(players_ptr) if players_ptr else []
             desc = " | ".join(
-                f"slot{i}(id={pid}): pos={p} lap={l}/{m} flags=0x{f:X}"
+                f"slot{i}(id={pid}): pos={p} lap={l}/{STANDARD_LAP_COUNT} flags=0x{f:X}"
                 for i, pid, p, l, m, f in slots
             )
             print(f"[race {race_num}] all players -- {desc or '(none readable)'}", flush=True)
