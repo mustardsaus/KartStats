@@ -37,6 +37,8 @@ Get into a race first.
 import os
 import struct
 import sys
+import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import auto_track_race as atr  # noqa: E402
@@ -44,6 +46,8 @@ import auto_track_race as atr  # noqa: E402
 dme = atr.dme
 
 DUMP_WORD_COUNT = 48  # covers RaceinfoPlayer+0x0 .. +0xBC
+
+LOG_PATH = Path(__file__).resolve().parent.parent / "raceinfoplayer_toplevel_scan_log.txt"
 
 # mkw-structures Player/PlayerSub chain (same offsets already used
 # elsewhere in this project).
@@ -148,85 +152,101 @@ def chain_check(player_candidate: int) -> dict:
 
 
 def main() -> None:
-    atr.hook_with_retry()
-    raceinfo_addr = atr.try_fast_path()
-    if raceinfo_addr is None:
-        print("Raceinfo fast path didn't check out -- are you actually in a race right now?")
-        found, _t, _c, _nr = atr.find_raceinfo_candidates()
-        if not found:
-            raise SystemExit("No Raceinfo candidate found.")
-        raceinfo_addr = found[0]
-    print(f"Raceinfo -> 0x{raceinfo_addr:08X}")
+    lines = [f"\n=== raceinfoplayer-toplevel-scan run at {time.strftime('%Y-%m-%d %H:%M:%S')} ==="]
 
-    rip_addr = atr.get_local_player_addr(raceinfo_addr)
-    if rip_addr is None:
-        raise SystemExit("Couldn't resolve local RaceinfoPlayer -- can't anchor this scan.")
-    print(f"Local player's RaceinfoPlayer -> 0x{rip_addr:08X}")
+    def emit(msg: str = "") -> None:
+        print(msg)
+        lines.append(msg)
 
-    print(f"\nDumping RaceinfoPlayer's first {DUMP_WORD_COUNT} words, checking each as a possible Player pointer...\n")
-    words = dump_words(rip_addr, DUMP_WORD_COUNT)
+    try:
+        atr.hook_with_retry()
+        raceinfo_addr = atr.try_fast_path()
+        if raceinfo_addr is None:
+            emit("Raceinfo fast path didn't check out -- are you actually in a race right now?")
+            found, _t, _c, _nr = atr.find_raceinfo_candidates()
+            if not found:
+                emit("No Raceinfo candidate found.")
+                return
+            raceinfo_addr = found[0]
+        emit(f"Raceinfo -> 0x{raceinfo_addr:08X}")
 
-    hits = []
-    for offset, value, is_ptr in words:
-        if not is_ptr:
-            print(f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: False)")
-            continue
+        rip_addr = atr.get_local_player_addr(raceinfo_addr)
+        if rip_addr is None:
+            emit("Couldn't resolve local RaceinfoPlayer -- can't anchor this scan.")
+            return
+        emit(f"Local player's RaceinfoPlayer -> 0x{rip_addr:08X}")
 
-        result = chain_check(value)
-        stage = result["stage"]
-        if stage == "ok":
-            print(
-                f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
-                f"<-- chain-resolves to a plausible Player/PlayerSub10!"
+        emit(f"\nDumping RaceinfoPlayer's first {DUMP_WORD_COUNT} words, checking each as a possible Player pointer...\n")
+        words = dump_words(rip_addr, DUMP_WORD_COUNT)
+
+        hits = []
+        for offset, value, is_ptr in words:
+            if not is_ptr:
+                emit(f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: False)")
+                continue
+
+            result = chain_check(value)
+            stage = result["stage"]
+            if stage == "ok":
+                emit(
+                    f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
+                    f"<-- chain-resolves to a plausible Player/PlayerSub10!"
+                )
+                hits.append((offset, value, result))
+            elif stage == "no_player_sub":
+                emit(
+                    f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
+                    f"-- +0x10 (playerSub?) = 0x{result['player_sub']:08X}, not a valid pointer"
+                )
+            elif stage == "no_player_sub10":
+                emit(
+                    f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
+                    f"-- playerSub=0x{result['player_sub']:08X}, but +0xC (playerSub10?) = "
+                    f"0x{result['player_sub10']:08X}, not a valid pointer"
+                )
+            elif stage == "unreadable_fields":
+                emit(
+                    f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
+                    f"-- playerSub=0x{result['player_sub']:08X}, playerSub10=0x{result['player_sub10']:08X}, "
+                    f"but couldn't read its star/shock/mega/mult fields"
+                )
+            else:  # implausible_values
+                emit(
+                    f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
+                    f"-- chains to playerSub10=0x{result['player_sub10']:08X} but values look wrong: "
+                    f"star={result['star']} shock={result['shock']} mega={result['mega']} mult={result['mult']}"
+                )
+
+        if not hits:
+            emit(
+                "\nNo top-level field of RaceinfoPlayer chain-resolved to a plausible "
+                "Player/PlayerSub10 (see the per-field notes above for where each one "
+                "failed). Either RaceinfoPlayer doesn't hold a forward pointer to "
+                "Player within the first "
+                f"0x{DUMP_WORD_COUNT * 4:X} bytes, or the Player/PlayerSub offsets "
+                "need rechecking."
             )
-            hits.append((offset, value, result))
-        elif stage == "no_player_sub":
-            print(
-                f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
-                f"-- +0x10 (playerSub?) = 0x{result['player_sub']:08X}, not a valid pointer"
-            )
-        elif stage == "no_player_sub10":
-            print(
-                f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
-                f"-- playerSub=0x{result['player_sub']:08X}, but +0xC (playerSub10?) = "
-                f"0x{result['player_sub10']:08X}, not a valid pointer"
-            )
-        elif stage == "unreadable_fields":
-            print(
-                f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
-                f"-- playerSub=0x{result['player_sub']:08X}, playerSub10=0x{result['player_sub10']:08X}, "
-                f"but couldn't read its star/shock/mega/mult fields"
-            )
-        else:  # implausible_values
-            print(
-                f"  +0x{offset:02X}: 0x{value:08X} (valid ptr: True)  "
-                f"-- chains to playerSub10=0x{result['player_sub10']:08X} but values look wrong: "
+            return
+
+        emit(f"\n{len(hits)} candidate field(s) chain-resolved plausibly:")
+        for offset, value, result in hits:
+            emit(
+                f"  RaceinfoPlayer+0x{offset:02X} (0x{value:08X}) -> playerSub=0x{result['player_sub']:08X} "
+                f"-> playerSub10=0x{result['player_sub10']:08X}  "
                 f"star={result['star']} shock={result['shock']} mega={result['mega']} mult={result['mult']}"
             )
-
-    if not hits:
-        print(
-            "\nNo top-level field of RaceinfoPlayer chain-resolved to a plausible "
-            "Player/PlayerSub10 (see the per-field notes above for where each one "
-            "failed). Either RaceinfoPlayer doesn't hold a forward pointer to "
-            "Player within the first "
-            f"0x{DUMP_WORD_COUNT * 4:X} bytes, or the Player/PlayerSub offsets "
-            "need rechecking."
+        emit(
+            "\nIf exactly one candidate above looks right, use a star/mushroom/bullet "
+            "bill/etc. now and re-run this script -- its star/shock/mega/mult should "
+            "change while the others (if any) stay put."
         )
-        return
-
-    print(f"\n{len(hits)} candidate field(s) chain-resolved plausibly:")
-    for offset, value, result in hits:
-        print(
-            f"  RaceinfoPlayer+0x{offset:02X} (0x{value:08X}) -> playerSub=0x{result['player_sub']:08X} "
-            f"-> playerSub10=0x{result['player_sub10']:08X}  "
-            f"star={result['star']} shock={result['shock']} mega={result['mega']} mult={result['mult']}"
-        )
-    print(
-        "\nIf exactly one candidate above looks right, use a star/mushroom/bullet "
-        "bill/etc. now and re-run this script -- its star/shock/mega/mult should "
-        "change while the others (if any) stay put."
-    )
+    finally:
+        # Always append whatever this run produced -- even a partial run
+        # (hook failure, no Raceinfo found, Ctrl+C) -- instead of only
+        # writing out on a full clean finish.
+        with open(LOG_PATH, "a") as f:
+            f.write("\n".join(lines) + "\n")
+        print(f"\n(Appended this run's output to {LOG_PATH})")
 
 
 if __name__ == "__main__":
