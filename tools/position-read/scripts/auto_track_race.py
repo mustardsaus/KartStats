@@ -190,52 +190,40 @@ PLAYER_DUMP_INTERVAL_S = 1.0
 #   MKW_DUMP_PLAYERS=1 python scripts/auto_track_race.py ...
 DUMP_ALL_PLAYERS = bool(os.environ.get("MKW_DUMP_PLAYERS"))
 
-# Low-noise but useful for sanity-checking against what's on screen: prints
-# the raw held-item value every PLAYER_DUMP_INTERVAL_S regardless of
-# whether it's changed. Off by default so solo play stays quiet:
-#   MKW_DUMP_ITEMS=1 python scripts/auto_track_race.py ...
-DUMP_ALL_ITEMS = bool(os.environ.get("MKW_DUMP_ITEMS"))
-
-# --- Held item (single player), found by direct ground-truth memory diff ---
-# Five consecutive attempts to find ITEMHandler by scanning for a byte-shape
-# fingerprint (see git history: this file's earlier revisions) each fixed a
-# real, log-confirmed bug in the scan/verify logic itself (a hang, an
-# OS-reserved-memory false positive, a stable-vs-static confusion, a
-# fixed-first-15 cap, a static-image-vs-heap mixup) -- but never actually
-# found the real thing. The last two attempts each produced a DIFFERENT
-# heap-plausible, genuinely-live candidate that STILL read constant "Green
-# Shell" for the entire race. The byte-range shape filter just isn't a
-# specific enough fingerprint on its own: other dynamically-changing heap
-# objects satisfy it too, every time.
+# --- Held item (single player) -- player-struct-relative scan, replacing ---
+# three failed whole-RAM approaches in a row (see git history): a two-point
+# before/after diff "confirmed" an address (0x802F3A14) that turned out to
+# fire on almost every poll tick, unrelated to real pickups; a continuous
+# watch scored by "changes rarely" drowned in noise (528,032 candidates in
+# 7.3 seconds, because a huge fraction of all 88MB of RAM changes within
+# seconds of normal play, and pure chance alone guarantees many bytes pass
+# through the 19-value item range); a version correlating against
+# real-time Enter-keypress marks fixed the noise problem but needed
+# frame-accurate keypresses while actually playing, which wasn't practical.
 #
-# This sidesteps shape-guessing entirely, the same way Raceinfo::sInstance
-# itself was ultimately pinned down: get one concrete, known-true data
-# point, then look for exactly that, instead of hoping a generic shape is
-# unique. scripts/find_itemhandler_by_diff.py snapshots all of RAM right
-# before and right after one real, known item pickup and reports every
-# address whose byte changed to exactly that item's id. Run three times
-# with three different items (mushroom, bullet bill, star) and
-# intersected: thousands of coincidental exact-value matches per run
-# (4229, 6964, and 2052 respectively) collapsed to exactly ONE address
-# that changed to the right value all three times:
-#   0x802F3A14: 0x00 -> 0x04 (mushroom), 0x00 -> 0x0F (bullet bill),
-#               0xFF -> 0x09 (star)
-# A single address surviving a 3-way intersection against completely
-# different target byte values, out of thousands of raw candidates each
-# time, isn't a coincidence. It's also a STATIC address (below
-# ITEMHANDLER_HEAP_LIKELY_START's old 0x81000000 heap neighborhood), which
-# explains why the heap-object structural scan could never find it: it was
-# never a heap object to begin with.
+# The actual fix: stop searching all of RAM. Powerups are logically tied to
+# a player, and PLAYER_OFF_ID/_POSITION/_CURRENT_LAP/_MAX_LAP/_STATE_FLAGS
+# are all real, confirmed-correct fields on the SAME RaceinfoPlayer struct
+# `player_addr` already points at every single race (found via the
+# Raceinfo::sInstance fast path, never once wrong in any race logged so
+# far). If the held item lives in that same struct -- or a pointer inside
+# it -- the real address is somewhere in a window of a few hundred bytes
+# we ALREADY have, not somewhere in 88 million bytes of RAM we don't.
 #
-# Single-player only, per the original ask -- there's no per-slot mapping
-# here the way read_all_players has for Raceinfo; a multiplayer version
-# would need its own ground-truth diff run to find each local slot's
-# address.
-HELD_ITEM_ADDR = 0x802F3A14
+# scan_player_item_window (used by track_until_race_ends, opt-in via
+# MKW_SCAN_PLAYER_ITEM=1) logs every byte that changes anywhere in
+# [player_addr, player_addr + PLAYER_ITEM_SCAN_SIZE) for the whole race.
+# Because that window is tiny, logging its FULL history for the entire
+# race is cheap and safe -- no risk of repeating the multi-hundred-
+# thousand-candidate/gigabyte-log blowup a whole-RAM scan produced. Play
+# one race, grab a few different items, then report back (in order) which
+# items you actually got -- that ordered sequence is the ground truth this
+# gets matched against, no live marking required.
+PLAYER_ITEM_SCAN_SIZE = 0x200  # generous past the last documented field (stateFlags, 0x38)
+SCAN_PLAYER_ITEM = bool(os.environ.get("MKW_SCAN_PLAYER_ITEM"))
 
-# The lower bound of the enum ITEM_NAMES actually covers (0x00-0x12); any
-# byte outside this range (seen in practice: 0xFF) means "not holding a
-# real item" and is treated as equivalent to no item, not as a real pickup.
+# The real item enum only covers 0x00-0x12 (see ITEM_NAMES below); any byte
+# outside that range isn't a plausible item id.
 HELD_ITEM_MIN = 0x00
 HELD_ITEM_MAX = 0x12
 
@@ -253,14 +241,14 @@ def item_name(item_id: int) -> str:
     return ITEM_NAMES.get(item_id, f"unknown item (id 0x{item_id:02X})")
 
 
-def read_held_item():
-    """Reads the local player's currently-held item straight off
-    HELD_ITEM_ADDR -- a confirmed-real, static address (see that constant's
-    comment for how it was found), so there's no scanning, verifying, or
-    candidate-picking left to do here at all. Returns the raw byte, or None
-    if the read itself failed (hook lost, address briefly unmapped)."""
+def read_player_item_window(player_addr: int):
+    """Bulk-reads [player_addr, player_addr + PLAYER_ITEM_SCAN_SIZE) as a
+    numpy byte array, or None if the read failed. One read per poll tick,
+    reused by track_until_race_ends to diff against the previous tick's
+    read -- piggybacking on the loop that's already polling player_addr
+    for position/lap every tick anyway."""
     try:
-        return dme.read_byte(HELD_ITEM_ADDR)
+        return np.frombuffer(dme.read_bytes(player_addr, PLAYER_ITEM_SCAN_SIZE), dtype=np.uint8)
     except Exception:
         return None
 
@@ -922,22 +910,26 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
     or reads stop making sense entirely. Prints a line whenever position or
     lap changes (denominator shown is the constant STANDARD_LAP_COUNT, not
     the live maxLap field -- see that constant's comment for why). Also
-    prints an event line the moment the local player's held item (read
-    straight off HELD_ITEM_ADDR -- see that constant's comment) changes to
-    a new, real item -- edge-triggered the same way overtakes are, so
-    holding one item for a while only logs the one pickup, not every poll
-    tick. Going back to "no item" (used/thrown, or any byte outside
-    HELD_ITEM_MIN..HELD_ITEM_MAX) is tracked silently, not printed, since
-    the ask was "record which powerups we got", not every use. Also prints
-    a full all-slots dump every PLAYER_DUMP_INTERVAL_S for players (opt-in,
-    MKW_DUMP_PLAYERS) and the raw held-item value (opt-in, MKW_DUMP_ITEMS)
-    -- see read_all_players / read_held_item.
+    prints a full all-slots dump every PLAYER_DUMP_INTERVAL_S for players
+    (opt-in, MKW_DUMP_PLAYERS) -- see read_all_players.
+
+    If SCAN_PLAYER_ITEM is on, also diffs [player_addr, player_addr +
+    PLAYER_ITEM_SCAN_SIZE) every tick (reusing the read_player call this
+    loop already makes every tick anyway) and prints every byte that
+    changes, flagging ones that land in the real item range. At the end of
+    the race it prints a per-offset summary -- see the "Held item"
+    comment block above read_player_item_window for why this, rather than
+    a whole-RAM scan, is the current approach. The idea is to play one
+    race with this on, then report back (in order) which items you
+    actually picked up, and match that sequence against the printed
+    offsets by eye.
     Returns ((pos, lap, maxlap), reason)."""
     last = None
     stale = 0
     next_dump = time.time()
-    next_item_dump = time.time()
-    last_item_id = None
+    race_start = time.time()
+    prev_window = read_player_item_window(player_addr) if SCAN_PLAYER_ITEM else None
+    offset_history = {}  # offset -> [(elapsed_s, value), ...] -- only this race, printed at the end
 
     first = read_player(player_addr)
     if first is not None:
@@ -972,26 +964,22 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
                 print(f"[race {race_num}] lap {lap}/{STANDARD_LAP_COUNT}  (position {pos})", flush=True)
         last = cur
 
-        item_id = read_held_item()
-        if item_id is not None:
-            if HELD_ITEM_MIN <= item_id <= HELD_ITEM_MAX:
-                if item_id != last_item_id:
-                    print(
-                        f"[race {race_num}] got item: {item_name(item_id)}  "
-                        f"(position {pos}, lap {lap}/{STANDARD_LAP_COUNT})",
-                        flush=True,
-                    )
-                    last_item_id = item_id
-            else:
-                # Outside the real item enum (seen in practice: 0xFF) --
-                # treat as "no item held" so the SAME item picked up again
-                # later still re-triggers the print above.
-                last_item_id = None
-
-        if DUMP_ALL_ITEMS and time.time() >= next_item_dump:
-            desc = item_name(item_id) if item_id is not None else "(unreadable)"
-            print(f"[race {race_num}] held item right now -- {desc}", flush=True)
-            next_item_dump = time.time() + PLAYER_DUMP_INTERVAL_S
+        if SCAN_PLAYER_ITEM:
+            cur_window = read_player_item_window(player_addr)
+            if cur_window is not None and prev_window is not None and len(cur_window) == len(prev_window):
+                diff_idx = np.nonzero(prev_window != cur_window)[0]
+                elapsed = round(time.time() - race_start, 1)
+                for i in diff_idx:
+                    offset = int(i)
+                    new_val = int(cur_window[i])
+                    offset_history.setdefault(offset, []).append((elapsed, new_val))
+                    if HELD_ITEM_MIN <= new_val <= HELD_ITEM_MAX:
+                        print(
+                            f"[race {race_num}] player+0x{offset:02X} -> {item_name(new_val)} "
+                            f"(0x{new_val:02X})  (t={elapsed}s, position {pos}, lap {lap}/{STANDARD_LAP_COUNT})",
+                            flush=True,
+                        )
+            prev_window = cur_window
 
         if DUMP_ALL_PLAYERS and time.time() >= next_dump:
             players_ptr = read_ptr(raceinfo_addr + RACEINFO_OFF_PLAYERS)
@@ -1004,11 +992,34 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
             next_dump = time.time() + PLAYER_DUMP_INTERVAL_S
 
         if flags & STATE_FINISHING:
+            if SCAN_PLAYER_ITEM:
+                _print_player_item_summary(race_num, offset_history)
             return cur[:3], "finished"
         if stage is not None and stage != 2:
+            if SCAN_PLAYER_ITEM:
+                _print_player_item_summary(race_num, offset_history)
             return cur[:3], "left_race_stage"
 
         time.sleep(POLL_INTERVAL_S)
+
+
+def _print_player_item_summary(race_num: int, offset_history: dict) -> None:
+    """End-of-race dump for SCAN_PLAYER_ITEM: every offset in the scanned
+    window that changed at all, with its full value history for the race.
+    Safe to print in full -- the window is only PLAYER_ITEM_SCAN_SIZE bytes,
+    so there's no risk of the huge-output problem a whole-RAM scan had."""
+    if not offset_history:
+        print(f"[race {race_num}] player-item scan: nothing in the window changed all race.", flush=True)
+        return
+    print(f"[race {race_num}] player-item scan -- {len(offset_history)} offset(s) changed:", flush=True)
+    for offset in sorted(offset_history):
+        hist = offset_history[offset]
+        hist_desc = ", ".join(
+            f"{t}s:{item_name(v) if HELD_ITEM_MIN <= v <= HELD_ITEM_MAX else f'0x{v:02X}'}"
+            for t, v in hist[:20]
+        )
+        more = f" (+{len(hist) - 20} more)" if len(hist) > 20 else ""
+        print(f"  +0x{offset:02X}: {len(hist)} change(s) -- {hist_desc}{more}", flush=True)
 
 
 def main() -> None:
