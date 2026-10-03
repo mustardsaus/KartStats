@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """Live-watch a candidate ItemHandler address found by item_snapshot_diff.py's
-round intersection.
+round intersection (or auto_item_finder.py's report).
 
 IMPORTANT -- this is a HEAP address, and we now have direct evidence
 (Raceinfo's own address logged as 0x81118270 in one item_snapshot_diff run
 and 0x811183B0 in the next, same Dolphin boot, different race) that these
 heap objects get reallocated at a NEW address every race, not just every
 Dolphin restart. So a candidate found during one race's rounds is only
-valid for THAT SAME race -- run this before that race ends, not after. The
-very first real-world test of the previous hardcoded default
-(0x8034155C from a 5-round intersection, the one candidate that varied
-plausibly every round while 6 others showed the exact same transition
-regardless of pickups) came back frozen at "Green Shell" the whole race --
-consistent with it being stale from the race item_snapshot_diff.py was
-actually run in, not the race it was tested in.
+valid for THAT SAME race -- run this before that race ends, not after.
+
+NOTE on a past bug, now fixed: addresses printed by item_snapshot_diff.py
+and auto_item_finder.py are ALREADY the ItemHandler base address -- pass
+them to this script directly, with NO subtraction. (An earlier version of
+this project's chat guidance and this script's default incorrectly
+subtracted 0x12 from a correct candidate, 0x8034155C, producing the wrong
+address 0x8034153A and reading memory 0x12 bytes before the real object --
+that is the real explanation for why the first live-watch test came back
+frozen at "Green Shell" the whole race, separate from the heap-staleness
+issue above, which is also real and still applies.)
 
 If a candidate tracks correctly within its own race, the next step is a
 reverse-pointer scan (same technique already used for Raceinfo::sInstance)
@@ -21,11 +25,10 @@ to find the permanent static pointer to this object, so it survives races
 and restarts going forward.
 
 Usage: python3 verify_itemhandler_candidate.py [itemhandler_addr_hex]
-  itemhandler_addr_hex: the ItemHandler base address to watch, e.g. 0x8034153A
-    (recvPackets[0].item_tail minus ITEMHANDLER_OFF_RECV_PACKETS(0x10) minus
-    ITEMPACKET_OFF_ITEM_TAIL(2) -- i.e. subtract 0x12 from whatever address
-    item_snapshot_diff.py printed as a surviving candidate). Defaults to the
-    address from the first (already-stale) test if omitted.
+  itemhandler_addr_hex: the ItemHandler base address to watch, exactly as
+    printed by item_snapshot_diff.py or auto_item_finder.py (no math needed).
+    Defaults to a stale address from an earlier test if omitted -- always
+    pass a fresh one from the current race instead.
 Prints a line every time the held item changes, live, so you can compare
 it against what you actually see happening in-game. Ctrl+C to stop.
 """
