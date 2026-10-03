@@ -52,6 +52,21 @@ candidate_addr - 0x18A + 0x120 should currently hold a plausible boost
 multiplier float (roughly 0.5-3.0) -- a second, independent structural
 signature that coincidental noise is very unlikely to also satisfy.
 
+A first real run (60s, one real star use at ~6s) came back with EXACTLY
+20000 "completed countdowns" -- hit the retention cap -- and the mark-
+matching found nothing near 6s. The top entries by duration had peaks
+like 26464 and 18706: orders of magnitude past any real frame-counter
+(star/mega max out around 480-600 frames), so these are something else
+entirely -- almost certainly fixed-point animation/audio values or
+pointer fragments that happen to ease monotonically for a few ticks.
+Nearly all of them completed in the first second of the run, which
+lines up with the "3, 2, 1, GO" pre-race countdown driving a burst of
+fading UI/audio values toward zero -- the same confound that hit
+watch_held_item_candidates.py's first real run. Two fixes: PEAK_MAX
+rejects anything above a real timer's plausible range, and WARMUP_S
+suppresses arming any NEW countdown during the first few seconds of the
+run (a countdown already in progress can still complete normally).
+
 Usage:
     python scripts/find_boost_timers.py
 Get into a race. Just play, and use a star, lightning, or mega mushroom
@@ -101,12 +116,32 @@ POLL_INTERVAL_S = 0.2
 # the shortest real effect (shock, roughly 3s of frames).
 PEAK_MIN = 15
 
+# A real item-effect timer is a FRAME count (60fps): star/mega mushroom
+# run about 8-10s (~480-600 frames), shock ~3s (~180 frames), mushroom
+# boost ~1-2s (~60-120 frames). A live run found 20000 "completed
+# countdowns" in 60s with peaks like 26464 and 18706 -- orders of
+# magnitude past any real frame-counter, almost certainly some other
+# kind of data (pointer fragments, fixed-point animation/audio values)
+# that happens to ease monotonically for a few ticks. Capping the peak
+# well above the longest real timer, but nowhere near those, cuts this
+# class of noise out entirely.
+PEAK_MAX = 700
+
 # A completed countdown's total duration must fall in this window to be
 # reported. Shock is the shortest real effect here (~3s); star/mega run
 # longer (~8-10s). Generous on both ends since we're sampling, not
 # frame-perfect.
 MIN_DURATION_S = 0.4
 MAX_DURATION_S = 15.0
+
+# New countdowns aren't allowed to ARM during the first WARMUP_S seconds
+# of a run. The same live run's noise was heavily concentrated here --
+# the post-load/pre-race countdown ("3, 2, 1, GO") drives a burst of
+# fading/easing UI and audio values that monotonically approach zero,
+# the exact same confound that hit watch_held_item_candidates.py's
+# first real run. A real item use can't happen before the race itself
+# starts, so nothing is lost by ignoring this window.
+WARMUP_S = 4.0
 
 RETENTION_CAP = 20000
 PRINT_CAP = 80
@@ -237,7 +272,7 @@ def aggregate_matches_by_address(completed: list, marks: list) -> list:
     return results
 
 
-def process_transition(active: dict, addr: int, old_val: int, new_val: int, tick: int, on_complete) -> None:
+def process_transition(active: dict, addr: int, old_val: int, new_val: int, tick: int, on_complete, allow_arm: bool = True) -> None:
     """Applies one address's old->new value transition to the countdown
     state machine. Pulled out of main()'s loop so the state machine
     itself -- the part that actually decides what counts as a real
@@ -248,7 +283,12 @@ def process_transition(active: dict, addr: int, old_val: int, new_val: int, tick
     last_value) for a countdown currently in progress. `on_complete`
     is called as on_complete(addr, peak, start_tick, end_tick) when a
     countdown finishes by reaching exactly zero; the caller decides
-    whether to actually keep it (duration window, retention cap)."""
+    whether to actually keep it (duration window, retention cap).
+    `allow_arm` gates whether THIS transition may start a brand new
+    countdown (used by main() to suppress arming during WARMUP_S,
+    where a burst of pre-race fade/ease values would otherwise flood
+    the candidate list) -- a countdown already in progress can still
+    complete normally regardless of this flag."""
     state = active.get(addr)
     if state is not None:
         peak, start_tick, last_val = state
@@ -264,7 +304,7 @@ def process_transition(active: dict, addr: int, old_val: int, new_val: int, tick
             # it, then fall through to see if THIS tick's jump re-arms
             # it as a brand new countdown.
             del active[addr]
-    if new_val >= PEAK_MIN and new_val > old_val:
+    if allow_arm and PEAK_MIN <= new_val <= PEAK_MAX and new_val > old_val:
         active[addr] = (new_val, tick, new_val)
 
 
@@ -296,11 +336,14 @@ def main() -> None:
         if MIN_DURATION_S <= (end_tick - start_tick) * POLL_INTERVAL_S <= MAX_DURATION_S and len(completed) < RETENTION_CAP:
             completed.append((addr, peak, start_tick, end_tick))
 
+    warmup_ticks = round(WARMUP_S / POLL_INTERVAL_S)
+
     try:
         while time.time() - t_start < WATCH_DURATION_S:
             time.sleep(POLL_INTERVAL_S)
             cur = snapshot()
             ticks += 1
+            allow_arm = ticks > warmup_ticks
             for start, _end in REGIONS:
                 a0, a1 = prev.get(start), cur.get(start)
                 if a0 is None or a1 is None or len(a0) != len(a1):
@@ -309,7 +352,7 @@ def main() -> None:
                 for i in diff_idx:
                     addr = start + int(i) * 2
                     old_val, new_val = int(a0[i]), int(a1[i])
-                    process_transition(active, addr, old_val, new_val, ticks, maybe_complete)
+                    process_transition(active, addr, old_val, new_val, ticks, maybe_complete, allow_arm)
             prev = cur
             print(f"  ...watching, {ticks * POLL_INTERVAL_S:.0f}s elapsed, {ticks} tick(s), "
                   f"{len(active)} countdown(s) in progress, "
@@ -318,12 +361,17 @@ def main() -> None:
         print()
 
     elapsed_total = time.time() - t_start
-    print(f"\n\nWatched for {elapsed_total:.1f}s across {ticks} tick(s).")
+    print(f"\n\nWatched for {elapsed_total:.1f}s across {ticks} tick(s) "
+          f"(first {WARMUP_S:.0f}s excluded from arming new countdowns).")
+    lines_header_extra = None
     if len(completed) >= RETENTION_CAP:
         print(f"(hit the retention cap of {RETENTION_CAP})")
+        lines_header_extra = f"(hit the retention cap of {RETENTION_CAP})"
 
     marks = prompt_boost_marks()
     lines = [f"\n=== boost-timer run at {time.strftime('%Y-%m-%d %H:%M:%S')} -- {elapsed_total:.1f}s, {ticks} tick(s), marks={marks} ==="]
+    if lines_header_extra:
+        lines.append(lines_header_extra)
 
     if not completed:
         msg = (
