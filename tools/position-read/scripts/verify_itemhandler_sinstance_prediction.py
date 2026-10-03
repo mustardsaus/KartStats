@@ -66,6 +66,57 @@ def _describe_pointer(label: str, addr: int) -> None:
     print(f"  {label} (0x{addr:08X}) -> 0x{val:08X}  (in MEM1/MEM2 range: {in_range})")
 
 
+SHAPE_RETRY_ATTEMPTS = 10
+SHAPE_RETRY_INTERVAL_S = 1.0
+
+
+def _retry_shape_check(addr: int) -> bool:
+    """A single failed shape check could be a genuinely wrong address, or
+    just an unlucky instant (e.g. read right as something was mid-update,
+    or before all 12 recvPackets slots have ever been touched this race).
+    Retries a few times before concluding either way, instead of judging
+    the prediction off one snapshot."""
+    for attempt in range(1, SHAPE_RETRY_ATTEMPTS + 1):
+        if atr._itemhandler_shape_ok(addr):
+            print(f"  shape check passed on attempt {attempt}/{SHAPE_RETRY_ATTEMPTS}")
+            return True
+        time.sleep(SHAPE_RETRY_INTERVAL_S)
+    return False
+
+
+def _dump_raw_recv_packets(addr: int) -> None:
+    """Prints every one of the 12 recvPackets slots decoded, so a shape-
+    check failure can be diagnosed by eye (which specific slot/field is
+    out of range) instead of just reported as a yes/no."""
+    try:
+        buf = dme.read_bytes(
+            addr + atr.ITEMHANDLER_OFF_RECV_PACKETS,
+            atr.ITEMPACKET_SIZE * atr.ITEMHANDLER_RECV_PACKET_COUNT,
+        )
+    except Exception as e:
+        print(f"  couldn't read recvPackets at 0x{addr:08X}: {e}")
+        return
+    print(f"  raw recvPackets[12] at 0x{addr:08X} (+0x{atr.ITEMHANDLER_OFF_RECV_PACKETS:X}):")
+    for i in range(atr.ITEMHANDLER_RECV_PACKET_COUNT):
+        base = i * atr.ITEMPACKET_SIZE
+        timer = buf[base + atr.ITEMPACKET_OFF_TIMER]
+        item_box = buf[base + atr.ITEMPACKET_OFF_ITEM_BOX]
+        item_tail = buf[base + atr.ITEMPACKET_OFF_ITEM_TAIL]
+        mode = buf[base + atr.ITEMPACKET_OFF_MODE]
+        flags = []
+        if item_box > atr.ITEM_OR_EMPTY_MAX:
+            flags.append("item_box OUT OF RANGE")
+        if item_tail > atr.ITEM_OR_EMPTY_MAX:
+            flags.append("item_tail OUT OF RANGE")
+        if mode > atr.ITEMPACKET_MODE_MAX:
+            flags.append("mode OUT OF RANGE")
+        flag_str = f"  <-- {', '.join(flags)}" if flags else ""
+        print(
+            f"    [{i:2d}] timer=0x{timer:02X} item_box={decode(item_box)} (0x{item_box:02X}) "
+            f"item_tail={decode(item_tail)} (0x{item_tail:02X}) mode=0x{mode:02X}{flag_str}"
+        )
+
+
 def main() -> None:
     atr.hook_with_retry()
 
@@ -73,15 +124,23 @@ def main() -> None:
     print(f"Predicted ITEMHandler::sInstance: 0x{PREDICTED_ITEMHANDLER_SINSTANCE_ADDR:08X}\n")
 
     target = atr.read_ptr(PREDICTED_ITEMHANDLER_SINSTANCE_ADDR)
-    shape_ok = target is not None and (
+    in_range = target is not None and (
         0x80000000 <= target < 0x81800000 or 0x90000000 <= target < 0x94000000
-    ) and atr._itemhandler_shape_ok(target)
+    )
 
-    if not shape_ok:
-        print("Prediction did NOT pass the shape check. Diagnostic reads:")
+    if not in_range:
+        print("Prediction did NOT resolve to an in-range pointer. Diagnostic reads:")
         _describe_pointer("predicted ITEMHandler::sInstance", PREDICTED_ITEMHANDLER_SINSTANCE_ADDR)
         _describe_pointer("published (uncorrected) ITEMHandler::sInstance", PUBLISHED_ITEMHANDLER_SINSTANCE_ADDR)
         _describe_pointer("confirmed Raceinfo::sInstance (sanity check -- should already be known-good)", CONFIRMED_RACEINFO_SINSTANCE_ADDR)
+        return
+
+    print(f"Predicted address resolves to 0x{target:08X} (in range) -- checking shape, retrying for up to {SHAPE_RETRY_ATTEMPTS}s if it doesn't pass immediately...")
+    shape_ok = _retry_shape_check(target)
+
+    if not shape_ok:
+        print(f"\nShape check never passed in {SHAPE_RETRY_ATTEMPTS} attempts. Raw data for manual inspection:")
+        _dump_raw_recv_packets(target)
         return
 
     print(f"Prediction PASSED the shape check -- ITEMHandler::sInstance (0x{PREDICTED_ITEMHANDLER_SINSTANCE_ADDR:08X}) -> 0x{target:08X}\n")
