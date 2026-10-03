@@ -1,59 +1,57 @@
 #!/usr/bin/env python3
 """
-Find the real held-item address by correlating memory changes against
-real-time markers YOU provide -- a second rewrite, after the first one
-(pure "changes rarely" scoring, no event correlation) turned out to still
-be hopeless.
+Find the real held-item address by looking for a SUSTAINED, UNCHANGED
+value in the item range -- a third rewrite, after both earlier approaches
+failed in live testing and the second one needed precise Enter-keypress
+timing that turned out to be impractical to do while actually playing.
 
 History of what's failed so far:
   1. find_itemhandler_by_diff.py: one before/after snapshot pair, 9-12s
-     apart. "Confirmed" 0x802F3A14 across three runs with three different
-     target items -- but live testing showed that address fires on almost
-     every poll tick regardless of what's happening on screen. A two-point
-     diff over a multi-second gap can't tell "real, rarely-changing held
-     item" apart from "coincidentally landed on the right value because
-     it's noisy/cycling" -- and apparently that coincidence lining up 3
-     separate times wasn't actually as unlikely as it looked.
-  2. This file's first version: no snapshot pair, just continuous
-     watching, scored by "fewest total changes". Also hopeless, for a
-     more basic reason: a live race apparently has a HUGE fraction of all
-     88MB of MEM1+MEM2 changing at some point within even a few seconds
-     (textures, audio, physics -- everything). With 19 valid item ids out
-     of 256 possible byte values (~7.4%), pure chance alone guarantees a
-     massive number of addresses will pass through the item range at some
-     point. Live testing confirmed it badly: a 7.3-SECOND run produced
-     528,032 "candidates" and an 1.8GB log file. "Rarely changes" cannot
-     distinguish real from noise when the noise floor is this dense --
-     most of those 528,032 addresses only changed once too.
+     apart. "Confirmed" an address across three runs with three different
+     target items -- but it turned out to fire on almost every poll tick
+     regardless of what was happening on screen. A two-point diff can't
+     tell "real, rarely-changing held item" apart from "coincidentally
+     landed on the right value because it's noisy", and that coincidence
+     lining up 3 times wasn't as unlikely as it looked.
+  2. This file's first version: continuous watching, scored by "fewest
+     total changes", no concept of WHEN a real event happened. Hopeless:
+     apparently a huge fraction of all 88MB of MEM1+MEM2 changes within
+     even a few seconds of normal gameplay, and with 19 valid item ids
+     out of 256 possible byte values, pure chance guarantees a massive
+     number of addresses pass through the item range sooner or later. A
+     7.3-SECOND run produced 528,032 "candidates" and an 1.8GB log file.
+  3. This file's second version: same idea, but correlated against
+     real-time Enter-keypress marks (press Enter the instant you pick up
+     or use an item). This fixed the noise-flood problem structurally,
+     but asking for frame-accurate keypresses while actually driving and
+     playing turned out to not be a reasonable ask.
 
-The actual missing ingredient isn't a smarter filter over passive
-observation -- it's ground truth about WHEN a real event happened, with
-enough precision to rule out the flood of unrelated coincidental matches.
-This version gets that directly from you: a background thread listens for
-Enter keypresses while the main loop keeps polling memory, and every
-Enter press records a timestamp ("I just did something -- pickup or
-use/throw, doesn't matter which"). Only memory changes that land within
-MARK_WINDOW_S of an actual marked moment get kept at all -- everything
-else is thrown away as it's seen, which also keeps this from blowing up
-into another gigabyte-sized log. A real held-item address should then
-have a change near EVERY SINGLE mark (ideally all of them), while a
-coincidental false positive would have to get lucky on every single mark
-to look the same -- a much harder bar to clear by chance than "changes
-rarely" ever was.
+This version needs no marking at all -- it uses a property of the real
+held-item state itself: once you pick something up, the byte should sit
+on that EXACT value, completely unchanged, until you use or throw it --
+which in practice means SECONDS, not milliseconds. Coincidental noise
+(audio, physics, textures) churns through values constantly and
+essentially never freezes on one specific byte for that long by accident.
+So instead of asking "did this address ever touch the item range" (which
+is true for hundreds of thousands of addresses), this asks "did this
+address change INTO the item range and then stay COMPLETELY STILL for at
+least MIN_STREAK_S seconds" -- a far rarer, far stronger signal, and one
+that falls directly out of just playing normally and not insta-using
+every item the instant you get it.
 
 Usage:
     python scripts/watch_held_item_candidates.py
-Follow the prompts, then: get into a race, start the watch, and press
-Enter the INSTANT you pick up an item, and again the INSTANT you use or
-throw it. Keep doing that for every item you interact with -- the more
-marks, the sharper the result. Nothing else needs typing before Enter,
-just press it bare. Runs for WATCH_DURATION_S seconds or Ctrl+C to stop
-early. Results (and a record of your marks) are appended to
-item_watch_log.txt.
+Get into a race (sitting in last place with nothing to do but grab items
+is ideal -- no need to actually race while this runs). Just play: when
+you pick up an item, hold onto it for a couple of SECONDS before using or
+throwing it, then grab another, and repeat a few times if you can. No
+keys to press, no precise timing -- just don't instant-use everything.
+Runs for WATCH_DURATION_S seconds, or Ctrl+C to stop early and still see
+results so far. Results append to item_watch_log.txt (capped in length
+this time, so it can't repeat the 1.8GB blowup from version 2 above).
 """
 
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -87,12 +85,19 @@ HEAP_LIKELY_START = 0x81000000
 WATCH_DURATION_S = 60.0
 POLL_INTERVAL_S = 0.4
 
-# How close (in seconds) a memory change has to land to one of your Enter
-# marks to count at all -- covers both your own reaction-time slop and
-# this tool's own polling granularity (POLL_INTERVAL_S). Wide enough to
-# not miss the real event, narrow enough that the flood of unrelated
-# background noise mostly doesn't happen to fall inside every window.
-MARK_WINDOW_S = 1.5
+# How long (in seconds) a value has to sit completely unchanged after
+# transitioning into the item range to count as "sustained" rather than a
+# coincidental blip. 2 seconds is well beyond what a single frame of
+# incidental churn would produce, but short enough that even a quick
+# "grab it, glance at it, use it" still gets caught.
+MIN_STREAK_S = 2.0
+MIN_STREAK_TICKS = max(1, round(MIN_STREAK_S / POLL_INTERVAL_S))
+
+# Cap how much this prints/logs, however many addresses qualify -- direct
+# response to version 2 of this file writing a 1.8GB log from an unbounded
+# candidate list. This filter should already produce far fewer hits, but
+# capped defensively regardless.
+MAX_REPORTED = 60
 
 ITEM_NAMES = {
     0x00: "green shell", 0x01: "red shell", 0x02: "banana", 0x03: "fake item box",
@@ -131,152 +136,104 @@ def snapshot():
     return out
 
 
-def _mark_listener(t_start: float, marks: list, marks_lock: threading.Lock, stop_event: threading.Event):
-    """Runs in a background thread for the whole watch window: every bare
-    Enter press gets timestamped (relative to t_start) and appended to
-    marks. Daemon thread -- if the main thread exits first (timeout or
-    Ctrl+C) this just gets dropped, no cleanup needed. input() itself
-    can't be interrupted from outside once it's blocking on a read, which
-    is fine here: it only ever blocks waiting for YOU to press Enter."""
-    while not stop_event.is_set():
-        try:
-            input()
-        except EOFError:
-            return
-        elapsed = time.time() - t_start
-        with marks_lock:
-            marks.append(round(elapsed, 2))
-        print(f"  [marked -- {elapsed:.1f}s]", flush=True)
-
-
 def main() -> None:
     hook_with_retry()
     print(
-        "This correlates memory changes against real markers YOU provide, instead of\n"
-        "guessing from passive behavior alone (two earlier attempts at that both failed --\n"
-        "see this file's docstring for why).\n"
+        "This looks for an address that changes INTO the item range and then sits\n"
+        "COMPLETELY UNCHANGED for a couple of seconds -- what holding a real item\n"
+        "actually looks like. No keys to press, no precise timing needed.\n"
         "\n"
-        f"Once it starts, you'll have about {WATCH_DURATION_S:.0f} seconds. Press Enter (just\n"
-        "Enter, nothing else) the INSTANT you pick up an item, and again the INSTANT you\n"
-        "use or throw it. Do that for every item you interact with -- more marks sharpen\n"
-        "the result. Ctrl+C any time to stop early and still see results so far.\n"
+        f"Once it starts, you'll have about {WATCH_DURATION_S:.0f} seconds. Just play: when you\n"
+        "pick up an item, hold onto it for a couple of SECONDS before using or throwing\n"
+        "it (instead of insta-using it), then grab another and repeat a few times if you\n"
+        "can. Sitting in last place with nothing else to do is fine -- you don't need to\n"
+        "actually race while this runs. Ctrl+C any time to stop early and still see\n"
+        "results so far.\n"
     )
     input("Press Enter when you're in a race and ready to start the clock... ")
 
-    marks = []
-    marks_lock = threading.Lock()
-    stop_event = threading.Event()
     t_start = time.time()
-
-    listener = threading.Thread(target=_mark_listener, args=(t_start, marks, marks_lock, stop_event), daemon=True)
-    listener.start()
-
-    # addr -> list of (elapsed_s, value) -- only ever grows for a change that
-    # landed within MARK_WINDOW_S of a mark that existed by the time of that
-    # change; everything else is discarded on the spot, which is what keeps
-    # this from repeating the 528,000-candidate/1.8GB blowup of the last
-    # version.
-    tracked = {}
     prev = snapshot()
     ticks = 0
+
+    # addr -> (value, start_tick) for an address CURRENTLY sitting on an
+    # in-range value since start_tick, not yet having changed away from it.
+    active = {}
+    # Completed sustained streaks: (addr, value, start_tick, end_tick).
+    completed = []
+
+    def maybe_complete(addr, value, start_tick, end_tick):
+        if end_tick - start_tick >= MIN_STREAK_TICKS and len(completed) < MAX_REPORTED * 4:
+            completed.append((addr, value, start_tick, end_tick))
 
     try:
         while time.time() - t_start < WATCH_DURATION_S:
             time.sleep(POLL_INTERVAL_S)
             cur = snapshot()
-            elapsed = time.time() - t_start
-            with marks_lock:
-                recent_marks = [m for m in marks if elapsed - MARK_WINDOW_S <= m <= elapsed + MARK_WINDOW_S]
-            if recent_marks:
-                for start, _end in REGIONS:
-                    a0, a1 = prev.get(start), cur.get(start)
-                    if a0 is None or a1 is None or len(a0) != len(a1):
-                        continue
-                    diff_idx = np.nonzero(a0 != a1)[0]
-                    for i in diff_idx:
-                        new_val = int(a1[i])
-                        if ITEM_MIN <= new_val <= ITEM_MAX:
-                            addr = start + int(i)
-                            tracked.setdefault(addr, []).append((round(elapsed, 2), new_val))
-            prev = cur
             ticks += 1
-            with marks_lock:
-                mark_count = len(marks)
-            print(f"  ...watching, {elapsed:.0f}s elapsed, {ticks} tick(s), {mark_count} mark(s), "
-                  f"{len(tracked)} candidate(s) so far", end="\r", flush=True)
+            for start, _end in REGIONS:
+                a0, a1 = prev.get(start), cur.get(start)
+                if a0 is None or a1 is None or len(a0) != len(a1):
+                    continue
+                diff_idx = np.nonzero(a0 != a1)[0]
+                for i in diff_idx:
+                    addr = start + int(i)
+                    new_val = int(a1[i])
+                    if addr in active:
+                        old_val, start_tick = active.pop(addr)
+                        maybe_complete(addr, old_val, start_tick, ticks)
+                    if ITEM_MIN <= new_val <= ITEM_MAX:
+                        active[addr] = (new_val, ticks)
+            prev = cur
+            print(f"  ...watching, {ticks * POLL_INTERVAL_S:.0f}s elapsed, {ticks} tick(s), "
+                  f"{len(active)} address(es) currently sitting in range, "
+                  f"{len(completed)} sustained streak(s) so far", end="\r", flush=True)
     except KeyboardInterrupt:
         print()
 
-    stop_event.set()
     elapsed_total = time.time() - t_start
-    with marks_lock:
-        final_marks = list(marks)
-    print(f"\n\nWatched for {elapsed_total:.1f}s across {ticks} tick(s), {len(final_marks)} mark(s): "
-          f"{', '.join(f'{m}s' for m in final_marks) or '(none -- you never pressed Enter, so nothing could be correlated)'}")
+    # Anything still active at the end that's already been sitting still
+    # long enough also counts -- you may just not have used that last item
+    # yet before time ran out.
+    for addr, (value, start_tick) in active.items():
+        maybe_complete(addr, value, start_tick, ticks)
 
-    def match_count(hist):
-        """How many of this address's own changes land within MARK_WINDOW_S
-        of SOME mark -- should equal len(hist) for a real candidate, since
-        every entry in hist already passed that test once at collection
-        time; recomputed here mainly to rank by, now that we also know the
-        FINAL mark list (a change collected using an early, incomplete view
-        of `marks` still used the real-time list at that moment, so this is
-        consistent, just re-derived for sorting clarity)."""
-        return sum(1 for t, _v in hist if any(abs(t - m) <= MARK_WINDOW_S for m in final_marks))
+    print(f"\n\nWatched for {elapsed_total:.1f}s across {ticks} tick(s) "
+          f"(~{POLL_INTERVAL_S:.1f}s/tick, {MIN_STREAK_TICKS} ticks = sustained).")
 
-    candidates = []
-    for addr, hist in tracked.items():
-        hist.sort()
-        matched = match_count(hist)
-        candidates.append((addr, hist, matched))
-    # Best first: matches the most marks, with the fewest leftover/extra
-    # changes beyond that (a real address should have #changes ~= #marks;
-    # one with far more than len(final_marks) is picking up extra noise
-    # that merely happens to also fall inside a mark window).
-    candidates.sort(key=lambda c: (-c[2], len(c[1])))
+    lines = [f"\n=== watch run at {time.strftime('%Y-%m-%d %H:%M:%S')} -- {elapsed_total:.1f}s, {ticks} tick(s) ==="]
 
-    lines = [
-        f"\n=== watch run at {time.strftime('%Y-%m-%d %H:%M:%S')} -- {elapsed_total:.1f}s, {ticks} tick(s) ===",
-        f"marks: {final_marks}",
-    ]
-
-    if not final_marks:
-        msg = "No marks recorded -- press Enter during the watch next time so changes can be correlated."
-        print(msg)
-        lines.append(msg)
-    elif not candidates:
-        msg = "No address changed to a plausible item value near any mark. Try a longer MARK_WINDOW_S, or check item ids aren't 0x00-0x12 after all."
+    if not completed:
+        msg = (
+            f"No address sat unchanged in the item range for {MIN_STREAK_S:.0f}+ seconds. "
+            "Try holding an item for longer before using it, or increase MIN_STREAK_S if "
+            "you were already doing that."
+        )
         print(msg)
         lines.append(msg)
     else:
-        print(
-            f"\n{len(candidates)} address(es) changed near at least one mark, best match first "
-            f"(you made {len(final_marks)} mark(s) -- a real address should be close to matching ALL of them):\n"
-        )
-        lines.append(f"{len(candidates)} candidate(s), best match first (target: {len(final_marks)} marks):")
-        for addr, hist, matched in candidates[:30]:
+        completed.sort(key=lambda c: -(c[3] - c[2]))  # longest streak first
+        print(f"\n{len(completed)} sustained streak(s) found, longest first:\n")
+        lines.append(f"{len(completed)} sustained streak(s), longest first:")
+        for addr, value, start_tick, end_tick in completed[:MAX_REPORTED]:
             tag = " [heap-likely]" if addr >= HEAP_LIKELY_START else ""
-            hist_desc = ", ".join(f"{t}s:{ITEM_NAMES.get(v, f'0x{v:02X}')}" for t, v in hist[:15])
-            more = f" (+{len(hist) - 15} more)" if len(hist) > 15 else ""
+            duration = (end_tick - start_tick) * POLL_INTERVAL_S
+            name = ITEM_NAMES.get(value, f"0x{value:02X}")
             line = (
-                f"  0x{addr:08X}{tag}  -- matched {matched}/{len(final_marks)} mark(s), "
-                f"{len(hist)} change(s) total -- {hist_desc}{more}"
+                f"  0x{addr:08X}{tag}  -- held {name} for {duration:.1f}s "
+                f"(ticks {start_tick}-{end_tick}, ~{start_tick * POLL_INTERVAL_S:.0f}s-"
+                f"{end_tick * POLL_INTERVAL_S:.0f}s into the run)"
             )
             print(line)
             lines.append(line)
-        if len(candidates) > 30:
-            print(f"  ... and {len(candidates) - 30} more (full list in {LOG_PATH.name})")
-        for addr, hist, matched in candidates[30:]:
-            hist_desc = ", ".join(f"{t}s:{ITEM_NAMES.get(v, f'0x{v:02X}')}" for t, v in hist)
-            lines.append(
-                f"  0x{addr:08X}  -- matched {matched}/{len(final_marks)} mark(s), "
-                f"{len(hist)} change(s) total -- {hist_desc}"
-            )
+        if len(completed) > MAX_REPORTED:
+            print(f"  ... and {len(completed) - MAX_REPORTED} more, not shown (also not logged, to keep this file small)")
+            lines.append(f"  ... and {len(completed) - MAX_REPORTED} more, not shown")
         print(
-            "\nLook for an address matching ALL or nearly all of your marks, with a change\n"
-            "count close to the number of marks (not far more) -- that's the strongest\n"
-            "candidate. If nothing matches all of them, the top few are still worth trying\n"
-            "directly before assuming this needs another rework."
+            "\nThe address with the longest sustained hold, especially if its timing roughly\n"
+            "matches when you actually held something that long, is the strongest candidate.\n"
+            "If the SAME address shows up with a long streak across more than one run, that's\n"
+            "even stronger confirmation."
         )
 
     try:
