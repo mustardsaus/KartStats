@@ -1,63 +1,52 @@
 #!/usr/bin/env python3
 """
-Finds the real Player object(s) (mkw-structures player.h -- the per-kart
-physics/input object, never before located this session) using the SAME
-proven technique that pinned down Raceinfo::sInstance's real address
-earlier in this project: a strong STRUCTURAL fingerprint plus a reverse-
-pointer-scan against something already reliably found, instead of yet
-another passive full-RAM behavioral scan.
+Finds the real PlayerSub10 object (mkw-structures player.h -- holds
+starTimer/shockTimer/MegaTimer/boost.multiplier, never before located
+this session) using a VALUE-based structural fingerprint, after the
+first version of this script (a PURE POINTER-shape fingerprint) turned
+out to be far too weak for this game's actual memory.
 
-Why the pivot: every full-RAM PASSIVE scan tried this session -- the
-item byte directly (auto_item_finder.py), a sustained-unchanged streak
-(watch_held_item_candidates.py), a monotonic frame-countdown
-(find_boost_timers.py) -- has drowned in false positives no matter how
-the filter got tuned. A real 60s run with one real star use still came
-back with 2,300+ coincidental partial matches even after tightening the
-peak range and adding a warmup window. ~44 million candidate addresses
-and MKW's memory being full of other things that ease/decay/sit still
-makes passive content-scanning fundamentally unreliable here.
+What went wrong with v1: it required Player's first 7 words (all
+pointers per mkw-structures) to simultaneously land in the valid MEM1/
+MEM2 range. Naively, requiring 7 independent ~2%-probability pointer
+checks should produce well under 1 false positive across ~22 million
+candidate positions -- instead, a real run found 82,741 "structural
+candidates". Real game memory is NOT uniformly random: C++ vtables,
+scene graphs, and arrays-of-pointers mean valid-looking pointers cluster
+densely almost everywhere, so "N consecutive valid pointers" is a much
+weaker filter here than the same math would suggest against random
+noise. (This is the same lesson, from a different direction, as every
+passive VALUE scan this session drowning in noise -- MKW's memory is
+just unusually dense with things that incidentally look structured.)
 
-What actually DID work, much earlier in this project: Raceinfo::sInstance
-was found via scan_region_for_raceinfo (auto_track_race.py) -- a
-STRUCTURAL shape check requiring several pointer-shaped fields to all be
-valid simultaneously, which is a vastly stronger fingerprint than any
-single value range (a real pointer lands in ~2% of the 32-bit address
-space; requiring several independent ones to agree compounds that down
-to something coincidental memory essentially never produces).
-
-Per mkw-structures player.h, the Player class's first 0x1c bytes
-(offsets 0x0, 0x4, 0x8, 0xc, 0x10, 0x14, 0x18) are ALL pointers:
-playerPointers, two undocumented pointers, the vtable, playerSub,
-params, and one more undocumented pointer. Requiring all SEVEN to be
-simultaneously valid MEM1/MEM2 pointers is an even stronger version of
-the same fingerprint that worked for Raceinfo (which only needed 3-4).
-
-For each surviving candidate, this derives (by actually dereferencing
-the documented pointer chain, not guessing a fixed address) playerSub10
-via playerSub+0x10 -> playerSub10+0xc, and from there the exact
-addresses of starTimer (+0x18A), shockTimer (+0x18C), MegaTimer (+0x194),
-and boost.multiplier (+0x120) -- the same fields find_boost_timers.py
-was blindly scanning all of RAM for. Because the candidate pool here is
-tiny (structurally filtered first), watching just these specific,
-derived addresses for a real item-use event should finally have a
-fighting chance against the noise that buried the blind scan.
-
-Separately, also reverse-scans for anything in memory that currently
-points AT the local player's already-reliable RaceinfoPlayer address
-(reusing auto_track_race.py's find_sinstance_candidates, built for
-exactly this kind of exact-value pointer search) -- testing whether
-Player and RaceinfoPlayer cross-reference each other directly, which
-would be an even more direct bridge than the structural scan alone.
+This version fingerprints PlayerSub10 directly by VALUE instead, the
+same style of check that already works for Raceinfo (which also mixes
+a couple of pointer fields with value constraints, not pointers alone):
+  int16_t starTimer   @ +0x18A,  must be a small plausible frame count
+  int16_t shockTimer  @ +0x18C,  ditto
+  int16_t MegaTimer   @ +0x194,  ditto
+  float   multiplier  @ +0x120,  must be a plausible boost multiplier
+Four independent, narrow VALUE constraints (not "is this 2% of address
+space") compound down to something real coincidence essentially can't
+produce by chance, the same way Raceinfo's stage/bool/pointer mix does.
+Also restricts the scan to the heap-likely portion of MEM1 (0x81000000+)
+plus MEM2, skipping the lower MEM1 range where code/static data (and
+most of those dense vtable tables) actually live -- PlayerSub10 is a
+per-race heap allocation, not a static.
 
 Usage:
     python scripts/find_player_candidates.py
-Get into a race. Finds Player-shaped candidates once, prints each with
-its derived boost/timer addresses, then live-watches those specific
-addresses for WATCH_DURATION_S seconds -- use a star, mushroom, mega
-mushroom, lightning, or bullet bill during that window and watch for
-which candidate (if any) changes. Results append to player_candidates_log.txt.
+Get into a race. Finds PlayerSub10-shaped candidates once (should be a
+small handful, not thousands), prints each, then live-watches their
+star/shock/mega/multiplier fields for WATCH_DURATION_S seconds -- use a
+star, mushroom, mega mushroom, lightning, or bullet bill during that
+window and watch for which candidate (if any) changes. Also reverse-
+scans for anything currently pointing at the local player's already-
+reliable RaceinfoPlayer address, as a separate, cheap cross-check.
+Results append to player_candidates_log.txt.
 """
 import os
+import struct
 import sys
 import time
 from pathlib import Path
@@ -77,14 +66,34 @@ import auto_track_race as atr  # noqa: E402
 
 dme = atr.dme
 
-# mkw-structures player.h: Player's first 7 words are all pointers.
-PLAYER_SHAPE_WORDS = 7  # offsets 0x0, 0x4, 0x8, 0xc, 0x10, 0x14, 0x18
-PLAYER_OFF_PLAYER_SUB = 0x10
-PLAYERSUB_OFF_PLAYERSUB10 = 0xC
-PLAYERSUB10_OFF_STAR_TIMER = 0x18A
-PLAYERSUB10_OFF_SHOCK_TIMER = 0x18C
-PLAYERSUB10_OFF_MEGA_TIMER = 0x194
-PLAYERSUB10_OFF_BOOST_MULTIPLIER = 0x120  # boost (+0x110) . multiplier (+0x10)
+# mkw-structures player.h, relative to PlayerSub10's own base.
+OFF_STAR_TIMER = 0x18A
+OFF_SHOCK_TIMER = 0x18C
+OFF_MEGA_TIMER = 0x194
+OFF_BOOST_MULTIPLIER = 0x120  # boost (+0x110) . multiplier (+0x10)
+
+# PlayerSub10 is at least this big (covers up to MegaTimer + 2 bytes).
+PLAYERSUB10_MIN_SIZE = OFF_MEGA_TIMER + 2
+
+# A real frame-countdown timer: 0 most of the time (not currently
+# affected), up to a generous ceiling well above the longest real
+# effect (star/mega, ~480-600 frames at 60fps). Same reasoning as
+# find_boost_timers.py's PEAK_MAX.
+TIMER_MIN, TIMER_MAX = 0, 700
+
+# A plausible boost speed multiplier. 1.0 = no boost; real boosts are a
+# 20-40% increase per the MKW TAS wiki, so this is deliberately wider
+# than that on both sides to tolerate an uninitialized-but-plausible
+# value.
+MULT_MIN, MULT_MAX = 0.3, 5.0
+
+# Skip the lower portion of MEM1 (code/static data, where v1's pointer-
+# density explosion came from) -- PlayerSub10 is a per-race heap
+# allocation, so it can only ever live here or in MEM2.
+HEAP_REGIONS = [
+    (0x81000000, 0x81800000),  # MEM1 heap-likely portion
+    (0x90000000, 0x94000000),  # MEM2
+]
 
 WATCH_DURATION_S = 60.0
 POLL_INTERVAL_S = 0.2
@@ -92,12 +101,31 @@ POLL_INTERVAL_S = 0.2
 LOG_PATH = Path(__file__).resolve().parent.parent / "player_candidates_log.txt"
 
 
-def scan_region_for_player_shape(start: int, end: int):
+def _read_i16_field_stride4(arr: np.ndarray, offset: int, n: int) -> np.ndarray:
+    """Big-endian signed int16 values at byte offset `offset`, `offset+4`,
+    `offset+8`, ... (candidate positions are 4-byte-aligned, so a field
+    at a fixed relative offset is also 4 bytes apart between candidates)."""
+    hi = arr[offset : offset + 4 * n : 4].astype(np.int32)
+    lo = arr[offset + 1 : offset + 1 + 4 * n : 4].astype(np.int32)
+    length = min(len(hi), len(lo))
+    vals = (hi[:length] << 8) | lo[:length]
+    return np.where(vals >= 0x8000, vals - 0x10000, vals)
+
+
+def _read_f32_field_stride4(arr: np.ndarray, offset: int, n: int) -> np.ndarray:
+    """Big-endian float32 values at the same stride-4 candidate positions."""
+    raw = arr[offset : offset + 4 * n]
+    usable = (len(raw) // 4) * 4
+    if usable <= 0:
+        return np.array([], dtype=np.float32)
+    return np.frombuffer(raw[:usable].tobytes(), dtype=">f4")
+
+
+def scan_region_for_playersub10_shape(start: int, end: int):
     """One vectorized pass over [start, end) for 4-byte-aligned addresses
-    where 7 CONSECUTIVE words are all simultaneously valid MEM1/MEM2
-    pointers -- see module docstring for why this is such a strong
-    fingerprint. Reuses auto_track_race.py's own helpers so this follows
-    the exact same proven pattern as scan_region_for_raceinfo."""
+    where starTimer/shockTimer/MegaTimer/boost.multiplier ALL look
+    plausible simultaneously -- see module docstring for why this value-
+    based fingerprint replaced the original pointer-density one."""
     size = end - start
     try:
         buf = dme.read_bytes(start, size)
@@ -105,50 +133,45 @@ def scan_region_for_player_shape(start: int, end: int):
         print(f"  (couldn't read 0x{start:08X}-0x{end:08X}: {exc})")
         return []
     arr = np.frombuffer(buf, dtype=np.uint8)
-    n_words = len(arr) // 4
-    if n_words < PLAYER_SHAPE_WORDS:
+    n = (len(arr) - PLAYERSUB10_MIN_SIZE) // 4 + 1
+    if n <= 0:
         return []
-    words = atr._read_u32_field(arr, 0, n_words)
-    mask = atr._in_valid_range(words)
-    n_positions = len(mask) - (PLAYER_SHAPE_WORDS - 1)
-    if n_positions <= 0:
-        return []
-    combined = mask[:n_positions].copy()
-    for k in range(1, PLAYER_SHAPE_WORDS):
-        combined &= mask[k : k + n_positions]
-    idxs = np.nonzero(combined)[0]
+
+    star_vals = _read_i16_field_stride4(arr, OFF_STAR_TIMER, n)
+    shock_vals = _read_i16_field_stride4(arr, OFF_SHOCK_TIMER, n)
+    mega_vals = _read_i16_field_stride4(arr, OFF_MEGA_TIMER, n)
+    mult_vals = _read_f32_field_stride4(arr, OFF_BOOST_MULTIPLIER, n)
+    length = min(len(star_vals), len(shock_vals), len(mega_vals), len(mult_vals))
+    star_vals, shock_vals, mega_vals, mult_vals = (
+        star_vals[:length],
+        shock_vals[:length],
+        mega_vals[:length],
+        mult_vals[:length],
+    )
+
+    mask = (
+        (star_vals >= TIMER_MIN) & (star_vals <= TIMER_MAX)
+        & (shock_vals >= TIMER_MIN) & (shock_vals <= TIMER_MAX)
+        & (mega_vals >= TIMER_MIN) & (mega_vals <= TIMER_MAX)
+        & (mult_vals >= MULT_MIN) & (mult_vals <= MULT_MAX)
+    )
+    idxs = np.nonzero(mask)[0]
     return [int(start + i * 4) for i in idxs]
 
 
-def find_player_shape_candidates():
+def find_playersub10_candidates():
     found = []
-    for start, end in atr.REGIONS:
-        found.extend(scan_region_for_player_shape(start, end))
+    for start, end in HEAP_REGIONS:
+        found.extend(scan_region_for_playersub10_shape(start, end))
     return found
 
 
-def derive_timer_addrs(player_addr: int):
-    """Actually dereferences the documented Player -> playerSub ->
-    playerSub10 chain (never guessing a fixed offset for the final
-    addresses) and returns a dict of derived field addresses, or None
-    if any link in the chain doesn't resolve to an in-range pointer."""
-    player_sub = atr.read_ptr(player_addr + PLAYER_OFF_PLAYER_SUB)
-    if player_sub is None or not (
-        0x80000000 <= player_sub < 0x81800000 or 0x90000000 <= player_sub < 0x94000000
-    ):
-        return None
-    player_sub10 = atr.read_ptr(player_sub + PLAYERSUB_OFF_PLAYERSUB10)
-    if player_sub10 is None or not (
-        0x80000000 <= player_sub10 < 0x81800000 or 0x90000000 <= player_sub10 < 0x94000000
-    ):
-        return None
+def field_addrs(playersub10_addr: int) -> dict:
     return {
-        "player_sub": player_sub,
-        "player_sub10": player_sub10,
-        "star_timer": player_sub10 + PLAYERSUB10_OFF_STAR_TIMER,
-        "shock_timer": player_sub10 + PLAYERSUB10_OFF_SHOCK_TIMER,
-        "mega_timer": player_sub10 + PLAYERSUB10_OFF_MEGA_TIMER,
-        "boost_multiplier": player_sub10 + PLAYERSUB10_OFF_BOOST_MULTIPLIER,
+        "star_timer": playersub10_addr + OFF_STAR_TIMER,
+        "shock_timer": playersub10_addr + OFF_SHOCK_TIMER,
+        "mega_timer": playersub10_addr + OFF_MEGA_TIMER,
+        "boost_multiplier": playersub10_addr + OFF_BOOST_MULTIPLIER,
     }
 
 
@@ -161,7 +184,6 @@ def _read_i16(addr: int):
 
 def _read_f32(addr: int):
     try:
-        import struct
         return struct.unpack(">f", dme.read_bytes(addr, 4))[0]
     except Exception:
         return None
@@ -205,33 +227,33 @@ def main() -> None:
                 print(line)
                 lines.append(line)
         else:
-            msg = "Nothing currently points at RaceinfoPlayer -- Player likely doesn't cross-reference it directly."
+            msg = "Nothing currently points at RaceinfoPlayer."
             print(msg)
             lines.append(msg)
 
-    print("\nStructurally scanning MEM1+MEM2 for Player-shaped objects (7 consecutive valid pointers)...")
+    print(
+        "\nScanning the heap-likely regions for PlayerSub10-shaped objects "
+        "(star/shock/mega timers + boost multiplier all plausible at once)..."
+    )
     t0 = time.time()
-    shape_candidates = find_player_shape_candidates()
-    print(f"{len(shape_candidates)} structural candidate(s) found in {time.time() - t0:.2f}s.")
-    lines.append(f"{len(shape_candidates)} structural candidate(s) found")
+    candidates = find_playersub10_candidates()
+    print(f"{len(candidates)} candidate(s) found in {time.time() - t0:.2f}s.")
+    lines.append(f"{len(candidates)} PlayerSub10-shaped candidate(s) found")
 
     resolved = {}
-    for addr in shape_candidates:
-        fields = derive_timer_addrs(addr)
-        if fields is None:
-            continue
+    for addr in candidates:
+        fields = field_addrs(addr)
         snap = snapshot_candidate(fields)
         resolved[addr] = fields
         line = (
-            f"  0x{addr:08X}  playerSub=0x{fields['player_sub']:08X}  playerSub10=0x{fields['player_sub10']:08X}\n"
-            f"      star={snap['star_timer']} shock={snap['shock_timer']} mega={snap['mega_timer']} "
-            f"boost.multiplier={snap['boost_multiplier']}"
+            f"  0x{addr:08X}  star={snap['star_timer']} shock={snap['shock_timer']} "
+            f"mega={snap['mega_timer']} boost.multiplier={snap['boost_multiplier']}"
         )
         print(line)
         lines.append(line)
 
     if not resolved:
-        msg = "\nNo structural candidate's playerSub->playerSub10 chain resolved. Nothing to watch."
+        msg = "\nNo PlayerSub10-shaped candidate found. Nothing to watch."
         print(msg)
         lines.append(msg)
         with open(LOG_PATH, "a") as f:
@@ -239,9 +261,9 @@ def main() -> None:
         return
 
     print(
-        f"\n{len(resolved)} candidate(s) with a resolved playerSub10 chain. Watching their star/shock/mega/"
-        f"boost.multiplier fields for {WATCH_DURATION_S:.0f}s -- use a star, mushroom, mega mushroom, lightning, "
-        "or bullet bill now and watch for a change. Ctrl+C to stop early.\n"
+        f"\n{len(resolved)} candidate(s). Watching their star/shock/mega/boost.multiplier fields for "
+        f"{WATCH_DURATION_S:.0f}s -- use a star, mushroom, mega mushroom, lightning, or bullet bill now "
+        "and watch for a change. Ctrl+C to stop early.\n"
     )
 
     prev = {addr: snapshot_candidate(fields) for addr, fields in resolved.items()}
