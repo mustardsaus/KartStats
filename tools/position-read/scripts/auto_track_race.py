@@ -217,6 +217,26 @@ ITEMPACKET_OFF_MODE = 0x03        # 0 = no item, 1-7 = handshake/activation stat
 ITEMPACKET_OFF_TAIL_MODE = 0x04   # 0, or 3-7 (hold/shoot/3-3/2-3/1-3)
 ITEMPACKET_OFF_ACKNOWLEDGE = 0x05  # 0 = ok, 1 = fail
 ITEMPACKET_OFF_PADDING = 0x07      # always 0 -- a strong per-record filter
+ITEMPACKET_OFF_TIMER = 0x00        # ticks; also doubles as the "not just blank memory" check below
+ITEMPACKET_OFF_ACK_TIMER = 0x06
+
+# Live testing found the bug the hard way: the per-race scan silently hung
+# for minutes with position tracking blocked behind it (nothing printed
+# after "track: ..."). Root cause, by re-reading the filter rather than
+# guessing: NONE of the byte checks above reject an all-zero record -- a
+# record that's entirely 0x00 trivially satisfies item_box<=0x14, mode<=7,
+# tail_mode==0, ack<=1, AND pad==0 all at once. Emulated RAM is full of
+# large all-zero regions (unused heap, inactive buffers), so a contiguous
+# 0x70-byte all-zero stretch matches at EVERY 4-byte-aligned offset inside
+# it -- almost certainly the tens of thousands of raw hits that were queued
+# up for the slow one-by-one verify_itemhandler_candidate (0.4s sleep each),
+# which is what actually hung. Two independent fixes, not a guess at a new
+# address: (1) reject the degenerate all-zero match outright -- it carries
+# no information regardless of cause, since literally any blank memory
+# produces it; (2) cap how many raw hits ever reach the slow per-candidate
+# verify, so a filter that's still too loose can never again block the
+# tracker for more than a few seconds.
+ITEMHANDLER_MAX_VERIFY = 25
 
 ITEM_NAMES = {
     0x00: "Green Shell", 0x01: "Red Shell", 0x02: "Banana", 0x03: "Fake Item Box",
@@ -239,9 +259,13 @@ def scan_region_for_itemhandler(start: int, end: int):
     independently has to satisfy several small-range byte constraints at
     once (item_box<=0x14, item_tail<=0x14, mode<=7, tail_mode in {0,3..7},
     acknowledge<=1, padding==0) -- and ALL 14 repeats of that same pattern
-    have to hold simultaneously for one candidate address to pass. Returns
-    the list of candidate addresses -- an empty list is itself useful
-    information (see ensure_itemhandler_addr), not just "nothing to do"."""
+    have to hold simultaneously for one candidate address to pass. ALSO
+    requires at least one nonzero byte somewhere across the whole 0x70-byte
+    window, across any race -- see ITEMHANDLER_MAX_VERIFY's comment for why
+    an all-zero match is rejected outright rather than treated as a hit.
+    Returns the list of candidate addresses -- an empty list is itself
+    useful information (see ensure_itemhandler_addr), not just "nothing to
+    do"."""
     size = end - start
     try:
         buf = dme.read_bytes(start, size)
@@ -255,13 +279,16 @@ def scan_region_for_itemhandler(start: int, end: int):
         return []
 
     mask = np.ones(n, dtype=bool)
+    any_nonzero = np.zeros(n, dtype=bool)
     for rec in range(ITEM_RECORD_COUNT):
         base = rec * ITEM_RECORD_SIZE
+        timer = _read_u8_field(arr, base + ITEMPACKET_OFF_TIMER, n)[:n]
         item_box = _read_u8_field(arr, base + ITEMPACKET_OFF_ITEM_BOX, n)[:n]
         item_tail = _read_u8_field(arr, base + ITEMPACKET_OFF_ITEM_TAIL, n)[:n]
         mode = _read_u8_field(arr, base + ITEMPACKET_OFF_MODE, n)[:n]
         tail_mode = _read_u8_field(arr, base + ITEMPACKET_OFF_TAIL_MODE, n)[:n]
         ack = _read_u8_field(arr, base + ITEMPACKET_OFF_ACKNOWLEDGE, n)[:n]
+        ack_timer = _read_u8_field(arr, base + ITEMPACKET_OFF_ACK_TIMER, n)[:n]
         pad = _read_u8_field(arr, base + ITEMPACKET_OFF_PADDING, n)[:n]
         mask &= (
             (item_box <= 0x14)
@@ -271,6 +298,16 @@ def scan_region_for_itemhandler(start: int, end: int):
             & (ack <= 1)
             & (pad == 0)
         )
+        any_nonzero |= (
+            (timer != 0)
+            | (item_box != 0)
+            | (item_tail != 0)
+            | (mode != 0)
+            | (tail_mode != 0)
+            | (ack != 0)
+            | (ack_timer != 0)
+        )
+    mask &= any_nonzero
     idxs = np.nonzero(mask)[0]
     return [int(start + i * 4) for i in idxs]
 
@@ -286,13 +323,16 @@ def _itemhandler_snapshot_ok(addr: int) -> bool:
         buf = dme.read_bytes(addr, ITEMHANDLER_SCAN_SIZE)
     except Exception:
         return False
+    saw_nonzero = False
     for rec in range(ITEM_RECORD_COUNT):
         base = rec * ITEM_RECORD_SIZE
+        timer = buf[base + ITEMPACKET_OFF_TIMER]
         item_box = buf[base + ITEMPACKET_OFF_ITEM_BOX]
         item_tail = buf[base + ITEMPACKET_OFF_ITEM_TAIL]
         mode = buf[base + ITEMPACKET_OFF_MODE]
         tail_mode = buf[base + ITEMPACKET_OFF_TAIL_MODE]
         ack = buf[base + ITEMPACKET_OFF_ACKNOWLEDGE]
+        ack_timer = buf[base + ITEMPACKET_OFF_ACK_TIMER]
         pad = buf[base + ITEMPACKET_OFF_PADDING]
         if not (
             item_box <= 0x14
@@ -303,7 +343,9 @@ def _itemhandler_snapshot_ok(addr: int) -> bool:
             and pad == 0
         ):
             return False
-    return True
+        if timer or item_box or item_tail or mode or tail_mode or ack or ack_timer:
+            saw_nonzero = True
+    return saw_nonzero  # reject the degenerate all-zero match -- see scan_region_for_itemhandler
 
 
 def verify_itemhandler_candidate(addr: int) -> bool:
@@ -319,20 +361,34 @@ def verify_itemhandler_candidate(addr: int) -> bool:
 
 def find_itemhandler_candidates():
     """One-time structural scan for a real ITEMHandler object, mirroring
-    find_raceinfo_candidates. Returns (found, raw_hit_count): found is
-    every address that matched the shape filter AND survived the
+    find_raceinfo_candidates. Returns (found, raw_hit_count, capped):
+    found is every address that matched the shape filter AND survived the
     stability recheck; raw_hit_count is how many addresses matched the
-    shape filter BEFORE that recheck, across both regions -- kept
-    separate so a zero-candidates result can say which stage failed."""
+    shape filter BEFORE that recheck, across both regions -- kept separate
+    so a zero-candidates result can say which stage failed; capped is True
+    if raw_hit_count exceeded ITEMHANDLER_MAX_VERIFY and the slow per-
+    candidate verify (0.4s sleep each) was cut off before checking all of
+    them. That cap exists because it's exactly what hung the tracker live:
+    a filter that still matches more than a handful of addresses turns the
+    "verify everything" loop into a multi-minute block on the main race
+    loop, with nothing printed (not even positions) the whole time it's
+    stuck. Printed scan stats happen in ensure_itemhandler_addr, right
+    after this returns -- not buried after the slow part."""
     found = []
     raw_hit_count = 0
+    verified = 0
+    capped = False
     for start, end in REGIONS:
         raw_hits = scan_region_for_itemhandler(start, end)
         raw_hit_count += len(raw_hits)
         for addr in raw_hits:
+            if verified >= ITEMHANDLER_MAX_VERIFY:
+                capped = True
+                continue  # keep counting raw_hit_count for the rest of this region, just stop verifying
+            verified += 1
             if verify_itemhandler_candidate(addr):
                 found.append(addr)
-    return found, raw_hit_count
+    return found, raw_hit_count, capped
 
 
 def read_item_box(itemhandler_addr: int, player_id: int):
@@ -371,10 +427,20 @@ def ensure_itemhandler_addr(itemhandler_addr):
     somewhere but doesn't hold up a moment later (more likely a genuine
     false positive than real ITEMHandler, since that struct shouldn't be
     structurally unstable); more than one survivor means disambiguation is
-    needed eventually, but for now this just uses the first and says so."""
+    needed eventually, but for now this just uses the first and says so.
+    A large raw_hit_count that got capped is flagged explicitly -- that's
+    the shape filter matching too much real memory (see ITEMHANDLER_MAX_VERIFY),
+    not a sign anything is actually close to working."""
     if itemhandler_addr is not None and _itemhandler_snapshot_ok(itemhandler_addr):
         return itemhandler_addr
-    candidates, raw_hit_count = find_itemhandler_candidates()
+    candidates, raw_hit_count, capped = find_itemhandler_candidates()
+    if capped:
+        print(
+            f"ITEMHandler scan: {raw_hit_count} raw shape-match(es) -- far more than expected, "
+            f"only checked the first {ITEMHANDLER_MAX_VERIFY} for stability. The filter is "
+            "matching too much real memory; treat any candidate found this way as unreliable.",
+            flush=True,
+        )
     if not candidates:
         print(
             f"ITEMHandler scan: {raw_hit_count} raw shape-match(es), 0 survived the "
