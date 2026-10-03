@@ -222,6 +222,70 @@ DUMP_ALL_PLAYERS = bool(os.environ.get("MKW_DUMP_PLAYERS"))
 PLAYER_ITEM_SCAN_SIZE = 0x200  # generous past the last documented field (stateFlags, 0x38)
 SCAN_PLAYER_ITEM = bool(os.environ.get("MKW_SCAN_PLAYER_ITEM"))
 
+# --- Held item, step 2: ITEMHandler::sInstance, a documented static --------
+# Race 1's direct byte-level scan above ruled out every offset in the
+# player struct window itself: offsets spaced 0xC4 apart cycling through
+# the whole item enum turned out to be a UI roulette-spin value (now
+# explained below -- it's item_box, not item_tail), +0x20/+0x25/+0x27/+0x28
+# turned out to just be PLAYER_OFF_POSITION/_CURRENT_LAP/_MAX_LAP (known
+# fields) numerically overlapping the item-id range by coincidence, and a
+# cluster of ~34 offsets each changed exactly once, right at a lap
+# transition -- one-off memory-reuse artifacts. None of it matched the
+# reported pickup sequence (Bullet Bill, Red Shell, Triple Red Shell,
+# Mushroom, Fake Item Box, Mega Mushroom). So the held item isn't stored
+# inline in RaceinfoPlayer.
+#
+# A disc extraction the user pulled via Dolphin ("DolphinKartStructure")
+# turned out to be just the game's raw filesystem (boot files, the
+# compiled main.dol/StaticR.rel, assets) -- no debug symbols, confirmed by
+# grepping both binaries for item-related strings and finding only asset
+# names (item_curr, item_next -- UI icon resources) and no .map/symbol
+# files at all. But it prompted re-checking mkw-structures (the same
+# community repo raceinfo.h came from, already proven correct for every
+# field used above) specifically for item state, which documents a
+# SEPARATE singleton class, ITEMHandler, with its own static instance
+# pointer at a FIXED address -- the exact same shape as Raceinfo::sInstance
+# at SINSTANCE_ADDR above:
+#   ITEMHandler::sInstance == 0x809c20f8          (itemhandler.h)
+#   ITEMHandler::getPlayerStoredItem(playerId)    (0x8065d21c -- a function
+#                                                   literally named this)
+#   recvPackets[12] at offset 0x10, 8-byte ITEMPacket structs, documented
+#   as "index player id"
+# and Mario Kart Wii's own network-protocol docs (tockdom wiki, the ITEM
+# packet -- recvPackets is this same packet type) give ITEMPacket's byte
+# layout: +0x00 timer, +0x01 item_box (the item CURRENTLY IN THE BOX --
+# this is almost certainly the 0xC4-spaced roulette-spin value race 1
+# found, now explained rather than just dismissed), +0x02 item_tail (the
+# item actually being CARRIED -- this is the one we want), +0x03 mode,
+# +0x04 tail_mode, +0x05 acknowledge, +0x06 ack_timer, +0x07 padding.
+#
+# So the real held item should be the byte at:
+#   itemhandler_addr + ITEMHANDLER_OFF_RECV_PACKETS
+#     + localPlayerId * ITEMPACKET_SIZE + ITEMPACKET_OFF_ITEM_TAIL
+# This is a sourced, named target rather than a blind pointer search --
+# same play-a-race-and-report-the-sequence verification as before, just
+# watching this specific documented packet instead of guessing.
+ITEMHANDLER_SINSTANCE_ADDR = 0x809C20F8
+ITEMHANDLER_OFF_RECV_PACKETS = 0x10
+ITEMPACKET_SIZE = 0x8
+ITEMPACKET_OFF_TIMER = 0x0
+ITEMPACKET_OFF_ITEM_BOX = 0x1   # item currently sitting in the box -- visual only
+ITEMPACKET_OFF_ITEM_TAIL = 0x2  # the item actually held/carried -- the real target
+ITEMPACKET_OFF_MODE = 0x3
+ITEMPACKET_OFF_TAIL_MODE = 0x4  # 3=hold, 4=shoot, 5=3/3, 6=2/3, 7=1/3 per tockdom
+ITEMPACKET_OFF_ACK = 0x5
+ITEMPACKET_OFF_ACK_TIMER = 0x6
+
+ITEMPACKET_FIELDS = [
+    ("timer", ITEMPACKET_OFF_TIMER),
+    ("item_box", ITEMPACKET_OFF_ITEM_BOX),
+    ("item_tail", ITEMPACKET_OFF_ITEM_TAIL),
+    ("mode", ITEMPACKET_OFF_MODE),
+    ("tail_mode", ITEMPACKET_OFF_TAIL_MODE),
+    ("acknowledge", ITEMPACKET_OFF_ACK),
+    ("ack_timer", ITEMPACKET_OFF_ACK_TIMER),
+]
+
 # The real item enum only covers 0x00-0x12 (see ITEM_NAMES below); any byte
 # outside that range isn't a plausible item id.
 HELD_ITEM_MIN = 0x00
@@ -251,6 +315,38 @@ def read_player_item_window(player_addr: int):
         return np.frombuffer(dme.read_bytes(player_addr, PLAYER_ITEM_SCAN_SIZE), dtype=np.uint8)
     except Exception:
         return None
+
+
+def read_itemhandler_addr():
+    """ITEMHandler::sInstance, a static pointer slot at a FIXED address in
+    this exact game build (0x809C20F8, from mkw-structures' itemhandler.h)
+    -- the same shape as Raceinfo's SINSTANCE_ADDR fast path above. Returns
+    the live ITEMHandler instance address, or None if it's not valid yet
+    (e.g. not constructed before a race is loaded)."""
+    addr = read_ptr(ITEMHANDLER_SINSTANCE_ADDR)
+    if addr is None or not (0x80000000 <= addr < 0x81800000 or 0x90000000 <= addr < 0x94000000):
+        return None
+    return addr
+
+
+def read_item_packet(itemhandler_addr: int, player_id: int):
+    """Reads the documented 8-byte ITEMPacket for `player_id` out of
+    ITEMHandler.recvPackets[player_id] ("index player id" per
+    mkw-structures' own comment). Returns the raw bytes, or None on a bad
+    read."""
+    try:
+        return dme.read_bytes(
+            itemhandler_addr + ITEMHANDLER_OFF_RECV_PACKETS + player_id * ITEMPACKET_SIZE,
+            ITEMPACKET_SIZE,
+        )
+    except Exception:
+        return None
+
+
+def _decode_item_field(name: str, value: int) -> str:
+    if name in ("item_box", "item_tail") and HELD_ITEM_MIN <= value <= HELD_ITEM_MAX:
+        return item_name(value)
+    return f"0x{value:02X}"
 
 
 def hook_with_retry(timeout_s: float = 30.0) -> None:
@@ -930,6 +1026,9 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
     race_start = time.time()
     prev_window = read_player_item_window(player_addr) if SCAN_PLAYER_ITEM else None
     offset_history = {}  # offset -> [(elapsed_s, value), ...] -- only this race, printed at the end
+    prev_item_packet = None
+    item_packet_history = {}  # field_name -> [(elapsed_s, value), ...]
+    itemhandler_seen = False  # print the "found it" line once, not every tick
 
     first = read_player(player_addr)
     if first is not None:
@@ -965,10 +1064,11 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
         last = cur
 
         if SCAN_PLAYER_ITEM:
+            elapsed = round(time.time() - race_start, 1)
+
             cur_window = read_player_item_window(player_addr)
             if cur_window is not None and prev_window is not None and len(cur_window) == len(prev_window):
                 diff_idx = np.nonzero(prev_window != cur_window)[0]
-                elapsed = round(time.time() - race_start, 1)
                 for i in diff_idx:
                     offset = int(i)
                     new_val = int(cur_window[i])
@@ -980,6 +1080,35 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
                             flush=True,
                         )
             prev_window = cur_window
+
+            # ITEMHandler::sInstance path -- see the "Held item, step 2" comment
+            # block above read_itemhandler_addr for why this is the sourced,
+            # named target (recvPackets[localId].item_tail) rather than the
+            # blind byte scan above.
+            itemhandler_addr = read_itemhandler_addr()
+            if itemhandler_addr is not None:
+                if not itemhandler_seen:
+                    itemhandler_seen = True
+                    print(f"[race {race_num}] found ITEMHandler at 0x{itemhandler_addr:08X}", flush=True)
+                try:
+                    local_id = dme.read_byte(player_addr + PLAYER_OFF_ID)
+                except Exception:
+                    local_id = None
+                if local_id is not None:
+                    cur_packet = read_item_packet(itemhandler_addr, local_id)
+                    if cur_packet is not None:
+                        if prev_item_packet is not None and len(cur_packet) == len(prev_item_packet) == ITEMPACKET_SIZE:
+                            for name, off in ITEMPACKET_FIELDS:
+                                old_v, new_v = prev_item_packet[off], cur_packet[off]
+                                if old_v != new_v:
+                                    item_packet_history.setdefault(name, []).append((elapsed, new_v))
+                                    print(
+                                        f"[race {race_num}] item_packet.{name}: {_decode_item_field(name, old_v)} -> "
+                                        f"{_decode_item_field(name, new_v)}  (t={elapsed}s, position {pos}, "
+                                        f"lap {lap}/{STANDARD_LAP_COUNT})",
+                                        flush=True,
+                                    )
+                        prev_item_packet = cur_packet
 
         if DUMP_ALL_PLAYERS and time.time() >= next_dump:
             players_ptr = read_ptr(raceinfo_addr + RACEINFO_OFF_PLAYERS)
@@ -994,10 +1123,12 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
         if flags & STATE_FINISHING:
             if SCAN_PLAYER_ITEM:
                 _print_player_item_summary(race_num, offset_history)
+                _print_item_packet_summary(race_num, item_packet_history)
             return cur[:3], "finished"
         if stage is not None and stage != 2:
             if SCAN_PLAYER_ITEM:
                 _print_player_item_summary(race_num, offset_history)
+                _print_item_packet_summary(race_num, item_packet_history)
             return cur[:3], "left_race_stage"
 
         time.sleep(POLL_INTERVAL_S)
@@ -1020,6 +1151,27 @@ def _print_player_item_summary(race_num: int, offset_history: dict) -> None:
         )
         more = f" (+{len(hist) - 20} more)" if len(hist) > 20 else ""
         print(f"  +0x{offset:02X}: {len(hist)} change(s) -- {hist_desc}{more}", flush=True)
+
+
+def _print_item_packet_summary(race_num: int, item_packet_history: dict) -> None:
+    """End-of-race dump for the ITEMHandler::sInstance / recvPackets path --
+    see the "Held item, step 2" comment block above ITEMHANDLER_SINSTANCE_ADDR.
+    item_tail is the documented "item actually being carried" field, so
+    that history is the one to check first against the reported pickup
+    sequence; the others (item_box, mode, tail_mode, ...) are printed too
+    since they're free context from the same 8-byte packet."""
+    if not item_packet_history:
+        print(f"[race {race_num}] item packet: nothing changed all race "
+              f"(ITEMHandler not found, or this player's packet never changed).", flush=True)
+        return
+    print(f"[race {race_num}] item packet -- {len(item_packet_history)} field(s) changed:", flush=True)
+    for name, _off in ITEMPACKET_FIELDS:
+        hist = item_packet_history.get(name)
+        if not hist:
+            continue
+        hist_desc = ", ".join(f"{t}s:{_decode_item_field(name, v)}" for t, v in hist[:20])
+        more = f" (+{len(hist) - 20} more)" if len(hist) > 20 else ""
+        print(f"  {name}: {len(hist)} change(s) -- {hist_desc}{more}", flush=True)
 
 
 def main() -> None:
