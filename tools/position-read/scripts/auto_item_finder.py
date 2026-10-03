@@ -51,6 +51,23 @@ LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_item_f
 SNAPSHOT_INTERVAL_S = 4.0
 MIN_APPEARANCES_TO_REPORT = 2  # ignore one-off single-change flukes in the final ranking
 
+# Confirmed via a real race: the STATE_FINISHING flag check below can miss
+# the moment the race actually ends (the flag read can keep returning a
+# stale/non-matching value off the cached player_addr instead of None, so
+# the "if flags is not None and flags & STATE_FINISHING" check just never
+# fires). When that happens the next snapshot lands on the results/menu
+# screen instead of the race -- a completely different memory layout that
+# makes shape_mask match far more addresses than real racing ever does. In
+# the race that caught this, every real interval stayed under 70 plausible
+# changes (even the single legitimate end-of-race item-clear spike, which
+# hit 66), then the very next interval -- the first one after the race
+# actually ended -- jumped to 9962. ROUND_SANITY_CAP is the backstop for
+# when the flag check doesn't catch that transition: comfortably above any
+# real in-race spike seen so far, comfortably below a results-screen
+# explosion, so a round over this is treated as "the game moved to a
+# different screen," not "a lot of real pickups happened."
+ROUND_SANITY_CAP = 300
+
 
 def log(f, msg: str) -> None:
     print(msg, flush=True)
@@ -88,14 +105,14 @@ def value_at(snapshot, addr: int, offset: int):
     return None
 
 
-def record_history(f, prev_snapshot, cur_snapshot, player_id: int, item_tail_off: int, history: dict, elapsed: float):
+def compute_round_changes(prev_snapshot, cur_snapshot, item_tail_off: int):
     """Same shape+change-to-plausible-item test as item_snapshot_diff.
-    diff_round, but instead of a single round's plausible set, appends
-    every plausible change to a per-address running history so the final
-    report can rank by value DIVERSITY rather than "changed every round"
-    (which doesn't hold for an automatic timer -- quiet stretches with no
-    pickup are normal and shouldn't disqualify the real address)."""
-    n_total = 0
+    diff_round, but returns this round's (addr, before_val, after_val)
+    changes as a plain list instead of writing into any shared state.
+    Kept side-effect-free on purpose: main() needs to see how big a round
+    is BEFORE deciding whether to merge it into the running history (see
+    ROUND_SANITY_CAP) rather than finding out after the damage is done."""
+    changes = []
     for (start, end, arr_before), (_s2, _e2, arr_after) in zip(prev_snapshot, cur_snapshot):
         if arr_before is None or arr_after is None:
             continue
@@ -111,7 +128,6 @@ def record_history(f, prev_snapshot, cur_snapshot, player_id: int, item_tail_off
         changed = before_tail != after_tail
         plausible = changed & (after_tail >= atr.HELD_ITEM_MIN) & (after_tail <= atr.HELD_ITEM_MAX)
         plausible_idx = np.nonzero(plausible)[0]
-        n_total += len(plausible_idx)
         for j in plausible_idx:
             # addr is the candidate's ITEMHANDLER BASE address (same
             # convention as item_snapshot_diff.diff_round) -- NOT the
@@ -119,10 +135,20 @@ def record_history(f, prev_snapshot, cur_snapshot, player_id: int, item_tail_off
             # read_item_packet(addr, player_id) adds the right offsets
             # itself; don't subtract item_tail_off from this again.
             addr = int(start + hits[j] * 4)
-            before_val = int(before_tail[j])
-            after_val = int(after_tail[j])
-            history.setdefault(addr, []).append((elapsed, before_val, after_val))
-    return n_total
+            changes.append((addr, int(before_tail[j]), int(after_tail[j])))
+    return changes
+
+
+def record_history(f, prev_snapshot, cur_snapshot, player_id: int, item_tail_off: int, history: dict, elapsed: float):
+    """Unconditionally merges one round's changes into the running history.
+    main() no longer calls this directly (it needs to apply ROUND_SANITY_CAP
+    before merging) -- kept as a thin wrapper around compute_round_changes
+    so the existing synthetic test, which exercises unconditional merging,
+    still applies unchanged."""
+    changes = compute_round_changes(prev_snapshot, cur_snapshot, item_tail_off)
+    for addr, before_val, after_val in changes:
+        history.setdefault(addr, []).append((elapsed, before_val, after_val))
+    return len(changes)
 
 
 def print_report(f, history: dict, item_tail_off: int):
@@ -197,8 +223,21 @@ def main() -> None:
                 round_num += 1
                 elapsed = time.time() - t0
                 cur_snapshot = isd.take_snapshot()
-                n_this_round = record_history(f, prev_snapshot, cur_snapshot, player_id, item_tail_off, history, elapsed)
-                log(f, f"[{elapsed:6.1f}s] snapshot {round_num}: {n_this_round} plausible change(s) this interval, {len(history)} address(es) tracked so far")
+                changes = compute_round_changes(prev_snapshot, cur_snapshot, item_tail_off)
+                if len(changes) > ROUND_SANITY_CAP:
+                    log(
+                        f,
+                        f"[{elapsed:6.1f}s] snapshot {round_num}: {len(changes)} plausible change(s) this "
+                        f"interval -- that's far beyond anything a real race has shown (cap={ROUND_SANITY_CAP}). "
+                        "This is the signature of the race having already ended and the game being on a "
+                        "different screen (results/menu) with a different memory layout, not a burst of real "
+                        "pickups -- the STATE_FINISHING check above should have caught this but evidently didn't "
+                        "this time. Discarding this interval and stopping capture.",
+                    )
+                    break
+                for addr, before_val, after_val in changes:
+                    history.setdefault(addr, []).append((elapsed, before_val, after_val))
+                log(f, f"[{elapsed:6.1f}s] snapshot {round_num}: {len(changes)} plausible change(s) this interval, {len(history)} address(es) tracked so far")
                 prev_snapshot = cur_snapshot
         except KeyboardInterrupt:
             log(f, "\nStopped by Ctrl+C -- showing whatever was captured so far.")
