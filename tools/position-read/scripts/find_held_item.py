@@ -3,27 +3,33 @@
 Finds the real "currently held item" field -- confirmed for real via
 Dolphin's own built-in Cheat Search (Tools > Cheats Manager > Start New
 Cheat Search), not guessed. That search converged on a single 32-bit
-int (0x8124b934 in that one session) that reads ~19-20 while holding no
-item and drops to a small 0-18 value matching the real in-game item ID
-the instant an item is picked up (9=Star, 10=Golden Mushroom, 15=Bullet
-Bill all confirmed exactly against the community item-ID table).
+int (0x8124b934 in that one session) that read ~19-20 while holding no
+item and dropped to a small 0-18 value matching the real in-game item
+ID the instant an item was picked up (9=Star, 10=Golden Mushroom,
+15=Bullet Bill all confirmed exactly against the community item-ID
+table). As expected, that exact address is a per-race heap allocation
+-- a fresh race immediately moved it elsewhere.
 
-That exact address is a per-session heap allocation, though, so it will
-almost certainly be somewhere else next time Dolphin is launched. This
-script re-finds it automatically every run using the now-confirmed
-VALUE signature instead of guessing at wide ranges like every previous
-attempt in this project:
-  - idle state: an int32 in a narrow window around 19-20 (not a wide
-    guessed range -- this is the one actual observed idle value)
-  - confirmation: the SAME address transitions into [0, 18] (a real
-    item ID) during the live-watch window, exactly matching what was
-    seen in Dolphin's Cheat Search
+The first attempt at re-finding it automatically scanned once for the
+narrow idle-value window, then passively watched for 60s and flagged
+ANY address that dipped into [0, 18] as "confirmed". That produced 58
+"confirmed" addresses in one run, several of them literally 4 bytes
+apart from each other -- a dead giveaway of landing in a region packed
+with small, frequently-changing, unrelated numbers (looks like
+overlapping reads of byte/short arrays), not one real field. Passively
+watching a noisy 60s window and reacting to any single dip into range
+just isn't a strong enough test on its own.
+
+This version instead replicates the actual interactive process that
+worked by hand in Dolphin's Cheat Search: narrow the candidate set
+round by round, alternating "did it change the way a real pickup
+would" and "did it stay exactly the same while nothing happened",
+exactly like alternating Equal-to-Last-Value / Not-Equal-to-Last-Value
+searches. It prompts you at each step instead of guessing when to look.
 
 Usage:
     python scripts/find_held_item.py
-Get into a race, make sure you're NOT currently holding an item, let it
-scan + narrow, then pick up (and optionally use) a few different items
-during the watch window.
+Get into a race and follow the prompts.
 """
 import os
 import sys
@@ -68,16 +74,16 @@ HEAP_REGIONS = [
     (0x90000000, 0x94000000),  # MEM2
 ]
 
-STABILITY_ROUNDS = 4
-STABILITY_INTERVAL_S = 0.25
-
-WATCH_DURATION_S = 60.0
-POLL_INTERVAL_S = 0.2
-
-RETENTION_CAP = 2000
-PRINT_CAP = 40
+# Stop narrowing early once the candidate set is this small -- no point
+# running more rounds than needed.
+TARGET_CANDIDATES = 3
+MAX_CYCLES = 4
 
 LOG_PATH = Path(__file__).resolve().parent.parent / "held_item_log.txt"
+
+
+def is_item_value(v) -> bool:
+    return v is not None and ITEM_ID_MIN <= v <= ITEM_ID_MAX
 
 
 def item_name(value) -> str:
@@ -120,23 +126,43 @@ def read_i32(addr: int):
         return None
 
 
-def filter_stable_candidates(candidates, rounds: int = STABILITY_ROUNDS, interval_s: float = STABILITY_INTERVAL_S):
-    """Keeps only candidates whose value stays EXACTLY the same across
-    `rounds` re-reads -- the real idle item-slot field should sit still
-    while you're not touching anything, same reasoning already proven
-    out (and already shown NOT to be a universal filter on its own) in
-    find_player_candidates.py, but here it's layered on top of the much
-    tighter, empirically-confirmed idle-value window instead of a wide
-    guessed range, so it's not fighting ubiquitous defaults this time."""
-    if not candidates or rounds <= 1:
-        return list(candidates)
-    alive = {addr: read_i32(addr) for addr in candidates}
-    for _ in range(rounds - 1):
-        time.sleep(interval_s)
-        alive = {addr: val for addr, val in alive.items() if read_i32(addr) == val}
-        if not alive:
-            break
-    return sorted(alive.keys())
+def snapshot(addrs) -> dict:
+    return {addr: read_i32(addr) for addr in addrs}
+
+
+# --- Pure narrowing logic (kept separate from the interactive prompts
+# below so it can be unit-tested without mocking input() or dme). ---
+
+def keep_changed_to_item(before_val, after_val) -> bool:
+    """Round that expects a real pickup: value must have changed AND
+    landed on a plausible item ID."""
+    return before_val != after_val and is_item_value(after_val)
+
+
+def keep_unchanged(before_val, after_val) -> bool:
+    """Round that expects nothing to have happened: value must be
+    exactly the same both times."""
+    return before_val == after_val and before_val is not None
+
+
+def keep_left_item_range(before_val, after_val) -> bool:
+    """Round that expects the item to have just been used: value must
+    have changed AND moved OUT of the item-ID range (back to "none")."""
+    return before_val != after_val and not is_item_value(after_val)
+
+
+def narrow(candidates, before: dict, after: dict, keep_fn):
+    return [addr for addr in candidates if keep_fn(before.get(addr), after.get(addr))]
+
+
+def run_round(candidates, prompt_before: str, prompt_after: str, keep_fn, emit):
+    input(prompt_before)
+    before = snapshot(candidates)
+    input(prompt_after)
+    after = snapshot(candidates)
+    kept = narrow(candidates, before, after, keep_fn)
+    emit(f"  -> {len(kept)} of {len(candidates)} candidate(s) survived this round.")
+    return kept, after
 
 
 def main() -> None:
@@ -158,80 +184,62 @@ def main() -> None:
             raceinfo_addr = found[0]
         emit(f"Raceinfo -> 0x{raceinfo_addr:08X}")
 
-        emit(
-            f"\nScanning for int32 values in the idle window [{IDLE_MIN}, {IDLE_MAX}] "
-            "-- make sure you're not currently holding an item..."
+        input(
+            f"\nMake sure you are NOT currently holding any item, then press Enter to scan "
+            f"for int32 values in the idle window [{IDLE_MIN}, {IDLE_MAX}]..."
         )
         t0 = time.time()
-        raw = find_idle_candidates()
-        emit(f"{len(raw)} raw candidate(s) found in {time.time() - t0:.2f}s.")
+        candidates = find_idle_candidates()
+        emit(f"{len(candidates)} raw candidate(s) found in {time.time() - t0:.2f}s.")
 
-        if len(raw) > RETENTION_CAP:
-            emit(f"(Capping to the first {RETENTION_CAP} for the stability pass.)")
-            raw = raw[:RETENTION_CAP]
+        cycle = 0
+        while candidates and len(candidates) > TARGET_CANDIDATES and cycle < MAX_CYCLES:
+            cycle += 1
+            emit(f"\n-- Cycle {cycle} ({len(candidates)} candidate(s) going in) --")
 
-        stability_window_s = (STABILITY_ROUNDS - 1) * STABILITY_INTERVAL_S
-        emit(f"Verifying stability over ~{stability_window_s:.1f}s (stay idle)...")
-        candidates = filter_stable_candidates(raw)
-        emit(f"{len(candidates)} candidate(s) stayed stable (down from {len(raw)}).")
-        lines.append(f"{len(raw)} raw -> {len(candidates)} stable idle candidate(s)")
+            candidates, _after = run_round(
+                candidates,
+                "Go pick up an item box (don't use it). Press Enter the moment you're holding something: ",
+                "Keep holding it, wait a second, then press Enter: ",
+                keep_changed_to_item,
+                emit,
+            )
+            if not candidates:
+                break
+
+            candidates, _after = run_round(
+                candidates,
+                "Still holding it, don't touch anything. Press Enter in a couple seconds: ",
+                "Keep waiting a couple more seconds, then press Enter again: ",
+                keep_unchanged,
+                emit,
+            )
+            if not candidates:
+                break
+
+            candidates, _after = run_round(
+                candidates,
+                "Now USE the item (press B). Press Enter right after you use it: ",
+                "Press Enter again (just confirming it's settled): ",
+                keep_left_item_range,
+                emit,
+            )
 
         if not candidates:
-            emit("\nNo stable idle-value candidate found. Nothing to watch.")
+            emit("\nEvery candidate was eliminated -- none of them behaved like a real item slot. See the notes above for where they dropped out.")
             return
 
-        shown = candidates[:PRINT_CAP]
-        for addr in shown:
-            emit(f"  0x{addr:08X}  = {read_i32(addr)}")
-        if len(candidates) > PRINT_CAP:
-            emit(f"  ...and {len(candidates) - PRINT_CAP} more (see log)")
+        final = snapshot(candidates)
+        emit(f"\n{len(candidates)} candidate(s) survived {cycle} cycle(s):")
         for addr in candidates:
-            if addr not in shown:
-                lines.append(f"  0x{addr:08X}  = {read_i32(addr)}")
+            emit(f"  0x{addr:08X}  current value = {final[addr]} ({item_name(final[addr])})")
 
-        emit(
-            f"\n{len(candidates)} candidate(s). Watching for {WATCH_DURATION_S:.0f}s -- "
-            "pick up (and optionally use) a few different items now. Ctrl+C to stop early.\n"
-        )
-
-        prev = {addr: read_i32(addr) for addr in candidates}
-        confirmed = set()
-        t_start = time.time()
-        try:
-            while time.time() - t_start < WATCH_DURATION_S:
-                time.sleep(POLL_INTERVAL_S)
-                if not dme.is_hooked():
-                    emit("Lost hook to Dolphin. Stopping.")
-                    break
-                for addr in candidates:
-                    cur = read_i32(addr)
-                    if cur != prev[addr]:
-                        elapsed = time.time() - t_start
-                        was_item = prev[addr] is not None and ITEM_ID_MIN <= prev[addr] <= ITEM_ID_MAX
-                        is_item = cur is not None and ITEM_ID_MIN <= cur <= ITEM_ID_MAX
-                        tag = ""
-                        if is_item and not was_item:
-                            tag = f"  <-- CONFIRMED: now holding {item_name(cur)}!"
-                            confirmed.add(addr)
-                        elif was_item and not is_item:
-                            tag = "  (item slot cleared)"
-                        line = (
-                            f"[{elapsed:6.1f}s] 0x{addr:08X} changed: {prev[addr]} ({item_name(prev[addr])}) -> "
-                            f"{cur} ({item_name(cur)}){tag}"
-                        )
-                        emit(line)
-                        prev[addr] = cur
-        except KeyboardInterrupt:
-            emit("\nStopped.")
-
-        if confirmed:
-            emit(f"\n{len(confirmed)} address(es) confirmed by a real item pickup this run:")
-            for addr in sorted(confirmed):
-                emit(f"  0x{addr:08X}")
+        if len(candidates) == 1:
+            emit(f"\nThis is almost certainly it: 0x{candidates[0]:08X}")
         else:
             emit(
-                "\nNo candidate was confirmed by an item pickup during this run -- "
-                "did you actually grab an item while it was watching?"
+                "\nStill more than one -- run this again, or keep cycling, to narrow further. "
+                "A real pickup/use round should keep shrinking this list."
             )
     finally:
         with open(LOG_PATH, "a") as f:
