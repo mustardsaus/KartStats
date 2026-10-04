@@ -853,8 +853,11 @@ def get_racedata_settings_addr():
     if raceconfig_base is None or not (0x90000000 <= raceconfig_base < 0x94000000):
         return None
     settings_addr = raceconfig_base + RACECONFIG_TO_SETTINGS_OFFSET
-    lap_count = read_ptr(settings_addr + RACEDATA_OFF_LAP_COUNT)  # reads a whole word; only the low byte matters below
-    if lap_count is None or (lap_count & 0xFF) != 3:
+    try:
+        lap_count = dme.read_byte(settings_addr + RACEDATA_OFF_LAP_COUNT)  # a single byte -- read_word here was big-endian, so a lap count of 3 landed in the HIGH byte (0x03000000) and a low-byte check never matched
+    except Exception:
+        return None
+    if lap_count != 3:
         return None
     course_id = read_ptr(settings_addr + RACEDATA_OFF_COURSE_ID)
     if course_id is None or course_id > 0x29:
@@ -1605,6 +1608,9 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
                 _print_player_item_summary(race_num, offset_history)
                 _print_item_packet_summary(race_num, item_packet_history)
                 _print_pointer_chase_summary(race_num, ptr_tracked)
+            if telemetry is not None:
+                telemetry.flush()
+                telemetry.drain()
             return cur[:3], "finished"
         if stage is not None and stage != 2:
             if telemetry is not None and other_addr is not None and not telemetry.slot_finished(2):
@@ -1613,6 +1619,9 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
                 _print_player_item_summary(race_num, offset_history)
                 _print_item_packet_summary(race_num, item_packet_history)
                 _print_pointer_chase_summary(race_num, ptr_tracked)
+            if telemetry is not None:
+                telemetry.flush()
+                telemetry.drain()
             return cur[:3], "left_race_stage"
 
         time.sleep(POLL_INTERVAL_S)

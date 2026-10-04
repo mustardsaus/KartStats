@@ -32,6 +32,8 @@ ERROR_LOG_INTERVAL_S, not on every tick.
 """
 
 import json
+import queue
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -56,7 +58,7 @@ COURSE_ID_TO_CIRCUIT_ID = {
     0x1E: "gba-bowser-castle-3", 0x1F: "gba-shy-guy-beach",
 }
 
-POST_TIMEOUT_S = 2.0
+POST_TIMEOUT_S = 15.0  # sent from a background thread, so a slow serverless cold start can't stall tracking
 ERROR_LOG_INTERVAL_S = 10.0
 
 
@@ -75,6 +77,9 @@ class TelemetryBridge:
         self.season_id = season_id
         self.api_url = api_url
         self.token = token
+        self._outbox = queue.Queue()
+        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker.start()
         self._pending = []
         self._last_error_log = 0.0
         self._slot_state = {}
@@ -150,9 +155,31 @@ class TelemetryBridge:
         return self._slot_state.get(slot, {}).get("finished", False)
 
     def flush(self):
+        """Hand the pending events to the background sender and return
+        immediately -- never blocks the Dolphin polling loop."""
         if not self._pending:
             return
         events, self._pending = self._pending, []
+        self._outbox.put(events)
+
+    def drain(self, timeout_s: float = 20.0):
+        """Wait (bounded) for queued batches to finish sending, e.g. at the
+        end of a race so the final race-finished events aren't lost."""
+        deadline = time.time() + timeout_s
+        while self._outbox.unfinished_tasks and time.time() < deadline:
+            time.sleep(0.1)
+
+    def _worker_loop(self):
+        while True:
+            events = self._outbox.get()
+            try:
+                self._post(events)
+            except Exception:
+                pass
+            finally:
+                self._outbox.task_done()
+
+    def _post(self, events):
         body = json.dumps({"events": events}).encode("utf-8")
         req = urllib.request.Request(
             self.api_url,
@@ -162,15 +189,20 @@ class TelemetryBridge:
         )
         try:
             urllib.request.urlopen(req, timeout=POST_TIMEOUT_S).read()
+        except urllib.error.HTTPError as exc:
+            self._log_error(f"HTTP {exc.code}: {exc.read()[:200]!r}")
         except Exception as exc:  # deliberately broad -- see class docstring
-            now = time.time()
-            if now - self._last_error_log >= ERROR_LOG_INTERVAL_S:
-                print(
-                    f"KartStats bridge: POST to {self.api_url} failed ({exc}) -- "
-                    "will keep trying; Dolphin tracking itself is unaffected.",
-                    flush=True,
-                )
-                self._last_error_log = now
+            self._log_error(str(exc))
+
+    def _log_error(self, detail: str):
+        now = time.time()
+        if now - self._last_error_log >= ERROR_LOG_INTERVAL_S:
+            print(
+                f"KartStats bridge: POST to {self.api_url} failed ({detail}) -- "
+                "will keep trying; Dolphin tracking itself is unaffected.",
+                flush=True,
+            )
+            self._last_error_log = now
 
     def _queue(self, event: dict):
         self._pending.append(event)

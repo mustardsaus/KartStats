@@ -45,8 +45,9 @@ export async function POST(req: NextRequest) {
 
   // All events in one POST batch belong to the same in-progress race --
   // the Python side only ever buffers one race at a time.
-  const { seasonId, raceNumber } = body.events[0];
-  const mismatched = body.events.find((e) => e.seasonId !== seasonId || e.raceNumber !== raceNumber);
+  const { seasonId } = body.events[0];
+  const senderRaceNumber = body.events[0].raceNumber;
+  const mismatched = body.events.find((e) => e.seasonId !== seasonId || e.raceNumber !== senderRaceNumber);
   if (mismatched) {
     return NextResponse.json(
       { error: "All events in one batch must share the same seasonId and raceNumber." },
@@ -64,13 +65,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Season ${seasonId} is not an Immersive season.` }, { status: 409 });
   }
 
+  // The race number is decided HERE, not trusted from the sender: the
+  // Python tracker counts races from 1 each time it starts, so restarting
+  // it mid-season would otherwise send "race 1" again and collide with an
+  // already-saved race. The in-progress race is always the next one after
+  // however many are saved for this season.
+  const racesBySeason = await store.getRacesBySeasonId();
+  const raceNumber = (racesBySeason.get(seasonId)?.length ?? 0) + 1;
+
   // Lap 0 is dropped here -- the single ingestion choke point, never
   // trusted to the Python sender alone (see dropLapZeroEvents's module
   // doc in lib/telemetry/events.ts). resolveEvents then turns each
   // event's raw tracked slot into the real adi/ren playerId, using this
   // season's Player Assignment (adiTelemetrySlot/renTelemetrySlot).
   const withoutLapZero = dropLapZeroEvents(body.events);
-  const resolved = resolveEvents(season, withoutLapZero);
+  const resolved = resolveEvents(season, withoutLapZero).map((e) => ({ ...e, raceNumber }));
   const droppedCount = body.events.length - resolved.length;
 
   if (resolved.length > 0) {
