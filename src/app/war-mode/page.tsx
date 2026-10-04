@@ -3,6 +3,7 @@ import { isBattleModeAvailable } from "@/lib/supabase/client";
 import { WarModeClient } from "@/components/warmode/WarModeClient";
 import { WarModeLanding } from "@/components/warmode/WarModeLanding";
 import { BattleModeClient } from "@/components/warmode/battle/BattleModeClient";
+import { ImmersiveModeClient } from "@/components/warmode/immersive/ImmersiveModeClient";
 
 export default async function WarModePage() {
   const store = getStore();
@@ -41,6 +42,27 @@ export default async function WarModePage() {
         seasonNumber={nextSeasonNumber}
         battleModeAvailable={isBattleModeAvailable()}
         justCompletedSeason={justCompletedSeason}
+      />
+    );
+  }
+
+  // An Immersive season is active exactly when its mode says so — any
+  // device landing here (including a Dual Device spectator) sees the
+  // same live, read-only dashboard; see ImmersiveModeClient's module doc
+  // for why no per-device join step is needed here, unlike Battle Mode.
+  if (activeSeason.mode === "immersive") {
+    const races = racesBySeasonId.get(activeSeason.id) ?? [];
+    const currentRaceNumber = races.length + 1;
+    const liveEvents = await store.getLiveTelemetryEvents(activeSeason.id, currentRaceNumber);
+    return (
+      <ImmersiveModeClient
+        initialSeason={activeSeason}
+        initialRaces={races}
+        initialLiveEvents={liveEvents}
+        circuits={circuits}
+        pointsMapping={pointsMapping}
+        historicalSeasons={historicalSeasons}
+        historicalRacesBySeasonId={historicalRacesBySeasonId}
       />
     );
   }

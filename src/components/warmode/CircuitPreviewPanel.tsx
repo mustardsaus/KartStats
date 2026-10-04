@@ -1,9 +1,10 @@
 "use client";
 
 import type { Circuit, PlayerId } from "@/lib/types";
-import type { CircuitStat } from "@/lib/stats";
+import type { CircuitStat, CircuitRecord } from "@/lib/stats";
 import { PLAYERS } from "@/lib/data/points-mapping";
-import { ChevronLeft, Flag } from "lucide-react";
+import { formatRaceTimeMs } from "@/lib/utils";
+import { ChevronLeft, Flag, Timer, Trophy } from "lucide-react";
 
 /**
  * Step 2 of the War Mode per-race flow: circuit picked, race hasn't
@@ -22,12 +23,18 @@ export function CircuitPreviewPanel({
   circuit,
   stat,
   raceNumber,
+  record,
   onBack,
   onRecordResults,
 }: {
   circuit: Circuit;
   stat: CircuitStat | null;
   raceNumber: number;
+  // Fastest Lap / Race Record for this circuit -- only ever populated
+  // from Immersive races' lap-time columns (see buildCircuitRecords).
+  // Optional and defaulted to null: Manual/Battle callers that haven't
+  // computed one simply don't render this block.
+  record?: CircuitRecord | null;
   onBack?: () => void;
   onRecordResults?: () => void;
 }) {
@@ -97,6 +104,36 @@ export function CircuitPreviewPanel({
           <p className="text-paper/65">No history at this circuit yet — this will be the first recorded race here.</p>
         )}
       </div>
+
+      {record && (record.fastestLap || record.raceRecord) && (
+        <div className="rounded-xl bg-gold/10 border border-gold/25 px-5 py-3 text-sm text-paper/90 space-y-1.5 mb-8">
+          <p className="font-hud text-[11px] font-bold tracking-[0.2em] text-gold uppercase flex items-center justify-center gap-1.5 mb-1">
+            <Trophy className="h-3.5 w-3.5" /> Circuit Records
+          </p>
+          {record.fastestLap && (
+            <p className="flex items-center justify-center gap-1.5">
+              <Timer className="h-3.5 w-3.5 text-paper/50" />
+              Fastest Lap:{" "}
+              <span className={`font-semibold ${record.fastestLap.playerId === "adi" ? "text-adi-vivid" : "text-ren-vivid"}`}>
+                {PLAYERS[record.fastestLap.playerId].name}
+              </span>{" "}
+              <span className="text-stat font-bold">{formatRaceTimeMs(record.fastestLap.lapTimeMs)}</span>
+              <span className="text-paper/50">(Lap {record.fastestLap.lap}, Race {record.fastestLap.raceNumber})</span>
+            </p>
+          )}
+          {record.raceRecord && (
+            <p className="flex items-center justify-center gap-1.5">
+              <Flag className="h-3.5 w-3.5 text-paper/50" />
+              Race Record:{" "}
+              <span className={`font-semibold ${record.raceRecord.playerId === "adi" ? "text-adi-vivid" : "text-ren-vivid"}`}>
+                {PLAYERS[record.raceRecord.playerId].name}
+              </span>{" "}
+              <span className="text-stat font-bold">{formatRaceTimeMs(record.raceRecord.finalTimeMs)}</span>
+              <span className="text-paper/50">(Race {record.raceRecord.raceNumber})</span>
+            </p>
+          )}
+        </div>
+      )}
 
       {onRecordResults && (
         <>

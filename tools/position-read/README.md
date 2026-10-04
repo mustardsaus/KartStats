@@ -164,16 +164,49 @@ The trial succeeds if the printed position actually tracks your real
 position as you drive (changes to 2 when you get passed, back to 1 when
 you repass, etc.) — not just that it prints *a* number.
 
+## KartStats live bridge (Immersive War Mode)
+
+`scripts/auto_track_race.py` can now POST what it reads straight into
+KartStats' Immersive War Mode instead of just printing to this terminal.
+It's entirely opt-in: run the script with no flags and nothing about it
+changes from before this existed.
+
+To enable it, start a season in Immersive mode in the app (War Mode →
+Immersive), copy the season id shown in its header, then:
+
+```
+python scripts/auto_track_race.py \
+  --season-id <paste the season id> \
+  --token dev-local-telemetry-token
+```
+
+(`--token` must match the running app's `TELEMETRY_BRIDGE_TOKEN` env var
+— `dev-local-telemetry-token` is what `.env.local` has it set to for
+local dev. `--api-url` defaults to `http://localhost:3000/api/telemetry/events`
+and only needs overriding if the app isn't running on the default port.
+All three flags also read from `KARTSTATS_SEASON_ID` / `KARTSTATS_BRIDGE_TOKEN`
+/ `KARTSTATS_API_URL` env vars, so you don't have to retype them every
+race if you'd rather `export` them once per terminal session.)
+
+With the bridge enabled it also finds the second player's slot (2P
+split-screen) and sends both players' circuit/position/lap/finish events
+— see `kartstats_bridge.py` for the wire format and `_find_other_player_addr`'s
+docstring for how "which raw slot is which human" is resolved (short
+version: it isn't, here — that's exactly what KartStats' own Player
+Assignment step, with its swap-players escape hatch, is for).
+
+**Not wired up: item/power-up events.** This script's own git history for
+item detection (ITEMHandler scanning, pointer-chasing, several reverts)
+shows that signal isn't confirmed reliable the way position/lap/course
+data already is. Sending unconfirmed reads into KartStats' permanent
+power-up stats would quietly corrupt Tomfoolery Tales with noise that
+looks like real data — wire that up once the item-detection research
+above settles on one trusted signal, not before.
+
 ## What's deliberately NOT built yet
 
 - No region auto-detection — you confirm/set it once by hand.
-- No write to the KartStats app — standalone local trial, same as
-  `item-recognition/`.
-- No event-driven "race just finished" trigger yet — Step 2 just polls
-  and prints; turning a polled value into a one-shot "race complete,
-  final position N" event is the next step once raw reads are trusted.
-- No multiplayer / split-screen handling (reading player 2's struct
-  instead of / in addition to player 1's).
+- Item/power-up events aren't sent to KartStats yet — see above.
 
 ## Files
 

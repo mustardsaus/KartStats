@@ -44,6 +44,7 @@ Usage:
 Ctrl+C to stop.
 """
 
+import argparse
 import os
 import sys
 import time
@@ -67,6 +68,16 @@ except ImportError:
         file=sys.stderr,
     )
     sys.exit(1)
+
+# KartStats live telemetry bridge (optional) -- see kartstats_bridge.py's
+# module doc. Importing it is wrapped the same way numpy/dolphin_memory_engine
+# are above, except a missing/broken bridge module should never block pure
+# local tracking: it's not in requirements.txt, and this script must keep
+# working exactly as before for anyone not using the bridge.
+try:
+    import kartstats_bridge as bridge
+except ImportError:
+    bridge = None
 
 # --- Raceinfo (the one global object), from raceinfo.h ---------------------
 RACEINFO_OFF_RANDOM1 = 0x4
@@ -122,7 +133,12 @@ RACEDATA_OFF_GAMEMODE = 0x8         # uint32, small enum
 RACEDATA_OFF_CPU_MODE = 0x14        # uint32, small enum
 RACEDATA_OFF_ITEM_MODE = 0x18       # uint32, small enum
 RACEDATA_OFF_CUP_ID = 0x20          # uint32
-RACEDATA_OFF_RACE_NUMBER = 0x24     # uint8_t, 0-3 (which race in the cup)
+RACEDATA_OFF_RACE_NUMBER = 0x24     # uint8_t, 1-4 (which race in the cup --
+                                     # confirmed live and 1-indexed via
+                                     # dump_known_racedata_addrs.py: the
+                                     # 4th race of a cup read back as 4,
+                                     # not 3, so the mask below allows up
+                                     # to 4, not 3 as originally assumed)
 RACEDATA_OFF_LAP_COUNT = 0x25       # uint8_t -- always 3 for a real MKW race,
                                      # the strongest single filter here (same
                                      # role RaceinfoPlayer.maxLap played)
@@ -183,6 +199,33 @@ RESCAN_INTERVAL_S = 0.5     # how often to retry finding Raceinfo if not found y
 # try_fast_path() below fails its sanity check and the blind scan takes
 # over again automatically, so nothing breaks, it just gets slow again.
 SINSTANCE_ADDR = 0x809B8F70
+
+# RaceConfig::spInstance -- the real (decompilation-confirmed) name for what
+# this file was calling "Racedata". Found via the same reverse-pointer-scan-
+# and-intersect technique as Raceinfo::sInstance above, with one extra step:
+# RaceConfig doesn't point directly at RacedataSettings -- a PR comment on
+# the actual MKW matching decompilation (github.com/doldecomp/mkw, PR #7)
+# shows real source doing
+#   System::RaceConfig::spInstance->mRaceScenario.mPlayers[idx].mPlayerType
+#   System::RaceConfig::spInstance->mRaceScenario.mSettings.mGameMode
+# i.e. mRaceScenario and mSettings are embedded BY VALUE inside RaceConfig,
+# not behind their own pointers, so spInstance points at RaceConfig's own
+# base address, well before the settings block, not at settings itself.
+# A widened MEM1 reverse-pointer scan (looking for "what points near
+# settings_addr - 0xB48", RacedataScenario.settings' already-confirmed
+# relative offset) turned up this address -- notably, exactly 8 bytes
+# before SINSTANCE_ADDR itself, consistent with the engine declaring its
+# handful of top-level "current race" singleton pointers right next to each
+# other. Confirmed live: the decoded track/character/vehicle data matched
+# reality across a mid-session random track change (Grumble Volcano ->
+# Wario's Gold Mine, same pointer value, object untouched -- just its
+# course_id field mutated in place) AND survived a full Dolphin restart
+# (object reallocated to a new MEM2 address, pointer slot unchanged) -- the
+# same "pointer stays put, object moves" signature that confirmed
+# SINSTANCE_ADDR above. Specific to this exact game build/region (RMCE01,
+# NTSC-U), same caveat as SINSTANCE_ADDR.
+RACECONFIG_SINSTANCE_ADDR = 0x809B8F68
+RACECONFIG_TO_SETTINGS_OFFSET = 0x1758  # RaceConfig_base + this = RacedataSettings addr
 
 # Every real MKW GP/VS race is exactly 3 laps -- used for DISPLAY only. Live
 # testing (once the fast path removed the lap-3 lock-on delay and gave us
@@ -791,10 +834,54 @@ def scan_region_for_racedata_settings(start: int, end: int):
         & (cpu_mode <= 10)
         & (item_mode <= 5)
         & (cup_id <= 0x30)
-        & (race_number <= 3)
+        & (race_number <= 4)
     )
     idxs = np.nonzero(mask)[0]
     return [int(start + i * 4) for i in idxs]
+
+
+def get_racedata_settings_addr():
+    """Dereference RACECONFIG_SINSTANCE_ADDR directly instead of blind-
+    scanning all of MEM1+MEM2 for something RacedataSettings-shaped -- the
+    same fast-path idea try_fast_path() already uses for Raceinfo. Returns
+    the live RacedataSettings address, or None if the pointer doesn't
+    currently resolve to something that passes a light sanity check (wrong
+    game build/region, or a menu/loading screen where RaceConfig hasn't
+    been (re)created yet) -- callers should fall back to the blind scan in
+    that case, not treat None as fatal."""
+    raceconfig_base = read_ptr(RACECONFIG_SINSTANCE_ADDR)
+    if raceconfig_base is None or not (0x90000000 <= raceconfig_base < 0x94000000):
+        return None
+    settings_addr = raceconfig_base + RACECONFIG_TO_SETTINGS_OFFSET
+    lap_count = read_ptr(settings_addr + RACEDATA_OFF_LAP_COUNT)  # reads a whole word; only the low byte matters below
+    if lap_count is None or (lap_count & 0xFF) != 3:
+        return None
+    course_id = read_ptr(settings_addr + RACEDATA_OFF_COURSE_ID)
+    if course_id is None or course_id > 0x29:
+        return None
+    return settings_addr
+
+
+def find_course_id():
+    """Same lookup find_track_name() has always done, factored out to
+    return the raw course_id int (KartStats bridge only -- it needs the
+    raw id to map to a circuit slug, not a display string). find_track_name()
+    below is now just this plus track_name() -- identical behavior to
+    before this was split, nothing about the actual lookup changed.
+    Returns None under the exact same conditions find_track_name() used to
+    return None for."""
+    settings_addr = get_racedata_settings_addr()
+    if settings_addr is not None:
+        course_id = read_ptr(settings_addr + RACEDATA_OFF_COURSE_ID)
+        if course_id is not None:
+            return course_id
+
+    found = []
+    for start, end in REGIONS:
+        found.extend(scan_region_for_racedata_settings(start, end))
+    if len(found) != 1:
+        return None
+    return read_ptr(found[0] + RACEDATA_OFF_COURSE_ID)
 
 
 def find_track_name():
@@ -803,18 +890,17 @@ def find_track_name():
     track/cup transition despite being documented as a permanent singleton
     (see the dead-address fix a couple commits back), so there's no reason
     to assume Racedata's settings block would either. Returns a display
-    string, or None if the scan found nothing or found more than one match
-    (ambiguous -- better to just omit the track name for a race than
-    print a wrong one)."""
-    found = []
-    for start, end in REGIONS:
-        found.extend(scan_region_for_racedata_settings(start, end))
-    if len(found) != 1:
-        return None
-    course_id = read_ptr(found[0] + RACEDATA_OFF_COURSE_ID)
-    if course_id is None:
-        return None
-    return track_name(course_id)
+    string, or None if neither the fast path nor the scan found exactly one
+    unambiguous match (better to just omit the track name for a race than
+    print a wrong one).
+
+    Tries the RaceConfig::spInstance fast path first (one dereference plus
+    a light sanity check, no scanning) and only falls back to the blind
+    full-RAM scan if that doesn't resolve -- same pattern as Raceinfo's
+    try_fast_path(), kept so this doesn't break on a different game
+    build/region where RACECONFIG_SINSTANCE_ADDR isn't this."""
+    course_id = find_course_id()
+    return track_name(course_id) if course_id is not None else None
 
 
 def read_ptr(addr: int):
@@ -869,6 +955,38 @@ def read_all_players(players_ptr: int, max_slots: int = MAX_PLAYER_SLOTS):
         pos, lap, maxlap, flags = player
         out.append((i, player_id, pos, lap, maxlap, flags))
     return out
+
+
+def _find_other_player_addr(raceinfo_addr: int, known_addr: int):
+    """KartStats bridge only. 2P split-screen has a second real human
+    player besides whichever one `known_addr` (PLAYER_SLOT_INDEX) already
+    tracks. Finds the first OTHER slot passing the exact same sanity
+    checks read_all_players already uses just above (pointer in range, a
+    readable id<=11, a readable player struct) -- the same empirical,
+    "no documented local/remote bit, read it off by eye" situation
+    described on read_all_players, which is exactly why KartStats' own
+    Player Assignment step has a 'swap players' escape hatch instead of
+    trusting slot order to mean anything in particular. Returns None
+    (bridge just sends slot 1) if nothing else sane is found -- e.g. true
+    single-player testing, or the struct layout changed."""
+    players_ptr = read_ptr(raceinfo_addr + RACEINFO_OFF_PLAYERS)
+    if players_ptr is None:
+        return None
+    for i in range(MAX_PLAYER_SLOTS):
+        cand = read_ptr(players_ptr + i * POINTER_SIZE)
+        if cand is None or cand == known_addr:
+            continue
+        if not (0x80000000 <= cand < 0x81800000 or 0x90000000 <= cand < 0x94000000):
+            continue
+        try:
+            player_id = dme.read_byte(cand + PLAYER_OFF_ID)
+        except Exception:
+            continue
+        if player_id > 11:
+            continue
+        if read_player(cand) is not None:
+            return cand
+    return None
 
 
 def _bump(counts, key):
@@ -1250,7 +1368,42 @@ def wait_for_any_race_start(candidates, timeout_s: float, status_every_s: float 
     return None, None
 
 
-def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
+def _wait_for_other_player_finish(other_addr: int, race_num: int, telemetry, race_start: float, timeout_s: float = 60.0) -> None:
+    """KartStats bridge only. Our own primary/local player already
+    finished (or left the race stage) and track_until_race_ends is about
+    to return -- but the OTHER player might still be racing. Without this,
+    their remaining position-updates and race-finished event would never
+    get sent, and KartStats' finalize step (which waits for BOTH slots
+    before turning a race permanent) would never close out the race.
+    Polls just this one slot, same cadence as the main loop, until it
+    finishes, stops making sense, or timeout_s runs out (e.g. the other
+    player quit to the menu without finishing). Does not touch
+    track_until_race_ends's own return value or timing at all -- this
+    only ever runs after that function has already decided to return."""
+    print(f"[race {race_num}] KartStats bridge: waiting for the other player to finish too...", flush=True)
+    deadline = time.time() + timeout_s
+    stale = 0
+    while time.time() < deadline:
+        if not dme.is_hooked():
+            return
+        cur = read_player(other_addr)
+        if cur is None:
+            stale += 1
+            if stale >= STALE_READS_TO_GIVE_UP:
+                return
+            time.sleep(POLL_INTERVAL_S)
+            continue
+        stale = 0
+        _pos, _lap, _maxlap, flags = cur
+        ts_ms = int((time.time() - race_start) * 1000)
+        telemetry.poll_slot(race_num, ts_ms, 2, cur, bool(flags & STATE_FINISHING))
+        telemetry.flush()
+        if flags & STATE_FINISHING:
+            return
+        time.sleep(POLL_INTERVAL_S)
+
+
+def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, telemetry=None):
     """Poll the local player's struct until the real finish flag
     (stateFlags & STATE_FINISHING) appears, Raceinfo.stage leaves 2 (race),
     or reads stop making sense entirely. Prints a line whenever position or
@@ -1269,6 +1422,15 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
     race with this on, then report back (in order) which items you
     actually picked up, and match that sequence against the printed
     offsets by eye.
+
+    `telemetry` (KartStats bridge only, default None -- zero behavior
+    change for anyone not using it) is an already-configured
+    kartstats_bridge.TelemetryBridge. When set, this also finds the OTHER
+    player's slot (_find_other_player_addr) and polls/sends both players'
+    position-update/lap-complete/race-finished events every tick,
+    alongside everything this function already did -- see that helper and
+    _wait_for_other_player_finish for why a second slot needs its own
+    handling here.
     Returns ((pos, lap, maxlap), reason)."""
     last = None
     stale = 0
@@ -1281,6 +1443,13 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
     itemhandler_addr = None
     itemhandler_scan_done = False  # one attempt per race -- see the call site's comment
     ptr_tracked = {}  # source_offset -> {"target", "window", "history", "retargets"}
+
+    other_addr = None
+    if telemetry is not None:
+        telemetry.start_race(race_num)
+        other_addr = _find_other_player_addr(raceinfo_addr, player_addr)
+        if other_addr is None:
+            print(f"[race {race_num}] KartStats bridge: only found one player slot -- sending slot 1 only.", flush=True)
 
     first = read_player(player_addr)
     if first is not None:
@@ -1314,6 +1483,15 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
             elif lap != last[1]:
                 print(f"[race {race_num}] lap {lap}/{STANDARD_LAP_COUNT}  (position {pos})", flush=True)
         last = cur
+
+        if telemetry is not None:
+            ts_ms = int((time.time() - race_start) * 1000)
+            telemetry.poll_slot(race_num, ts_ms, 1, cur, bool(flags & STATE_FINISHING))
+            if other_addr is not None:
+                other_cur = read_player(other_addr)
+                if other_cur is not None:
+                    telemetry.poll_slot(race_num, ts_ms, 2, other_cur, bool(other_cur[3] & STATE_FINISHING))
+            telemetry.flush()
 
         if SCAN_PLAYER_ITEM:
             elapsed = round(time.time() - race_start, 1)
@@ -1421,12 +1599,16 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int):
             next_dump = time.time() + PLAYER_DUMP_INTERVAL_S
 
         if flags & STATE_FINISHING:
+            if telemetry is not None and other_addr is not None and not telemetry.slot_finished(2):
+                _wait_for_other_player_finish(other_addr, race_num, telemetry, race_start)
             if SCAN_PLAYER_ITEM:
                 _print_player_item_summary(race_num, offset_history)
                 _print_item_packet_summary(race_num, item_packet_history)
                 _print_pointer_chase_summary(race_num, ptr_tracked)
             return cur[:3], "finished"
         if stage is not None and stage != 2:
+            if telemetry is not None and other_addr is not None and not telemetry.slot_finished(2):
+                _wait_for_other_player_finish(other_addr, race_num, telemetry, race_start)
             if SCAN_PLAYER_ITEM:
                 _print_player_item_summary(race_num, offset_history)
                 _print_item_packet_summary(race_num, item_packet_history)
@@ -1512,7 +1694,59 @@ def _print_pointer_chase_summary(race_num: int, ptr_tracked: dict) -> None:
             print(f"    +0x{offset:02X}: {len(h)} change(s) -- {hist_desc}{more}", flush=True)
 
 
+def _build_telemetry_from_args() -> "bridge.TelemetryBridge | None":
+    """KartStats bridge only. Parses --season-id/--api-url/--token (env
+    vars KARTSTATS_SEASON_ID/KARTSTATS_API_URL/KARTSTATS_BRIDGE_TOKEN as
+    defaults) and returns a configured TelemetryBridge, or None if the
+    bridge module isn't importable or no season id was given -- in both
+    of those cases this script runs exactly as it always has, pure local
+    printing, no network calls at all. A season id with no token is
+    treated as a configuration mistake worth flagging, not silently
+    ignored, since sending events with no Authorization header would just
+    get a 401 from the route every single tick."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--season-id",
+        default=os.environ.get("KARTSTATS_SEASON_ID"),
+        help="KartStats Immersive season id (copy it from the season's header in the app). "
+        "Omit to run this script exactly as before, with no KartStats bridge at all.",
+    )
+    parser.add_argument(
+        "--api-url",
+        default=os.environ.get("KARTSTATS_API_URL", "http://localhost:3000/api/telemetry/events"),
+        help="KartStats telemetry endpoint. Default: http://localhost:3000/api/telemetry/events",
+    )
+    parser.add_argument(
+        "--token",
+        default=os.environ.get("KARTSTATS_BRIDGE_TOKEN"),
+        help="Must match the running KartStats app's TELEMETRY_BRIDGE_TOKEN env var.",
+    )
+    args = parser.parse_args()
+
+    if not args.season_id:
+        return None
+    if bridge is None:
+        print(
+            "--season-id was given but kartstats_bridge.py couldn't be imported -- "
+            "running with the KartStats bridge disabled.",
+            file=sys.stderr,
+        )
+        return None
+    if not args.token:
+        print(
+            "--season-id was given but no --token / KARTSTATS_BRIDGE_TOKEN was set -- "
+            "running with the KartStats bridge disabled (every POST would just get a 401).",
+            file=sys.stderr,
+        )
+        return None
+
+    print(f"KartStats bridge enabled -- posting to {args.api_url} for season {args.season_id}.\n")
+    return bridge.TelemetryBridge(season_id=args.season_id, api_url=args.api_url, token=args.token)
+
+
 def main() -> None:
+    telemetry = _build_telemetry_from_args()
+
     hook_with_retry()
     print(
         "Autonomous tracking started -- play normally. No need to tell me "
@@ -1656,13 +1890,25 @@ def main() -> None:
                 continue
 
         race_num += 1
-        track = find_track_name()
+        course_id = find_course_id()
+        track = track_name(course_id) if course_id is not None else None
         print(
             f"[race {race_num}] track: {track}" if track else f"[race {race_num}] track: (couldn't identify it)",
             flush=True,
         )
 
-        result, reason = track_until_race_ends(raceinfo_addr, player_addr, race_num)
+        if telemetry is not None and course_id is not None:
+            circuit_id = bridge.COURSE_ID_TO_CIRCUIT_ID.get(course_id)
+            if circuit_id:
+                telemetry.send_circuit_detected(race_num, circuit_id)
+            else:
+                print(
+                    f"[race {race_num}] KartStats bridge: course id 0x{course_id:02X} has no known "
+                    "circuit mapping -- skipping the circuit-detected event for this race.",
+                    flush=True,
+                )
+
+        result, reason = track_until_race_ends(raceinfo_addr, player_addr, race_num, telemetry)
         if result is None:
             print(f"[race {race_num}] lost it before getting a solid reading; resuming.\n", flush=True)
             continue

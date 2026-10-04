@@ -1,4 +1,5 @@
-import type { BattleRound, Circuit, DriverId, ItemId, PlayerId, PointsMapping, RaceInput, RacePowerup, RawRace, RawSeason, RoundPowerup, TransmissionMode } from "@/lib/types";
+import type { BattleRound, Circuit, DisplayConfig, DriverId, ItemId, PlayerId, PointsMapping, RaceInput, RaceItemEvent, RacePositionSample, RacePowerup, RawRace, RawSeason, RoundPowerup, TransmissionMode } from "@/lib/types";
+import type { StoredTelemetryEvent } from "@/lib/telemetry/events";
 
 export interface ImportBatchResult {
   imported: boolean;
@@ -153,4 +154,74 @@ export interface DataStore {
    * action. Cascades to any open battle_rounds/battle_round_powerups.
    */
   deleteEmptySeason(seasonId: string): Promise<void>;
+
+  // --------------------------------------------------------------------
+  // Immersive War Mode — the Dolphin telemetry bridge. A race in
+  // progress has no permanent RawRace row yet; live_telemetry_events is
+  // the ephemeral holding area (mirrors the role BattleRound plays for
+  // Battle Mode) until a race-finished event for both players lets the
+  // caller (the API route's finalize step) turn it into a real race via
+  // the EXISTING addRace above — never a parallel write path. Nothing
+  // here is read by lib/stats directly; a race only becomes visible to
+  // the rest of the app once addRace has written it.
+  // --------------------------------------------------------------------
+
+  /**
+   * Starts a brand-new Immersive season. For "dual-device", also assigns
+   * a fresh battle code so a second device can join as a spectator,
+   * reusing the exact same battleCode/joinBattleSeason infrastructure
+   * Battle Mode already has — never a second pairing mechanism. Caller
+   * guards against a second active season, same as startSeason.
+   */
+  startImmersiveSeason(displayConfig: DisplayConfig): Promise<RawSeason>;
+
+  /** Player Assignment: which raw Dolphin slot (1 or 2) is adi vs ren. Set once, before any race starts. */
+  setSeasonTelemetrySlots(seasonId: string, adiSlot: 1 | 2, renSlot: 1 | 2): Promise<RawSeason>;
+
+  /**
+   * Player Assignment: each player's character/kart/transmission for the
+   * WHOLE season (unlike Battle Mode's Kart Kontrol, which re-picks per
+   * round) — reuses the same roster/columns, just fixed once up front.
+   */
+  setSeasonImmersiveLoadout(
+    seasonId: string,
+    loadout: {
+      adiCharacter: string | null;
+      adiKart: string | null;
+      adiTransmission: TransmissionMode | null;
+      renCharacter: string | null;
+      renKart: string | null;
+      renTransmission: TransmissionMode | null;
+    }
+  ): Promise<RawSeason>;
+
+  /** Appends already slot-resolved events (see resolveEvents in lib/telemetry/events.ts) to the live holding area for one in-progress race. */
+  ingestTelemetryEvents(seasonId: string, raceNumber: number, events: StoredTelemetryEvent[]): Promise<void>;
+
+  /** Full snapshot of everything logged so far for one in-progress race — for a mid-race joiner (second device, or a refresh) before it subscribes to the live tail. */
+  getLiveTelemetryEvents(seasonId: string, raceNumber: number): Promise<StoredTelemetryEvent[]>;
+
+  /** Clears the holding area for one race once it has been finalized into a permanent RawRace + position/item rows below. */
+  clearLiveTelemetryEvents(seasonId: string, raceNumber: number): Promise<void>;
+
+  /**
+   * Permanent per-race detail, written once at finalize time from the
+   * same events that drove the live dashboard — never reconstructed
+   * after the fact (spec section 8). Manual/Battle Mode races simply
+   * have none; Season Rewind's graphs render only when rows exist.
+   */
+  addRacePositionSamples(raceId: string, samples: RacePositionSample[]): Promise<void>;
+  getRacePositionSamples(raceId: string): Promise<RacePositionSample[]>;
+  addRaceItemEvents(raceId: string, events: RaceItemEvent[]): Promise<void>;
+  getRaceItemEvents(raceId: string): Promise<RaceItemEvent[]>;
+
+  /**
+   * Writes aggregate item counts straight onto the finalized race — the
+   * Immersive equivalent of copyRoundPowerupsToRace above, but built
+   * directly from the item-received timeline (there's no BattleRound-
+   * style ephemeral tally to copy from). Lands in the SAME race_powerups
+   * table Battle Mode uses, so Tomfoolery Tales gains rows without any
+   * shape change.
+   */
+  addRacePowerups(raceId: string, powerups: RacePowerup[]): Promise<void>;
 }

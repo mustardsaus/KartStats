@@ -13,6 +13,16 @@ export type WeightClass = "small" | "medium" | "large";
 export type TransmissionMode = "automatic" | "manual";
 
 /**
+ * War Mode's top-level choice (spec section 1): "manual" is the original
+ * flow, completely untouched by this feature. "immersive" is the new
+ * Dolphin-telemetry-driven flow -- see RawSeason.mode below.
+ */
+export type WarModeMode = "manual" | "immersive";
+
+/** Immersive only -- whether a second device joins as a live spectator. */
+export type DisplayConfig = "same-device" | "dual-device";
+
+/**
  * Battle Mode only: the two named players plus an optional third "guest"
  * seat ("Prawns") for a 3-driver battle. Deliberately kept separate from
  * `PlayerId` rather than widening it — the entire core stats engine
@@ -95,6 +105,24 @@ export interface RawRace {
   renCharacter?: string | null;
   renKart?: string | null;
   renTransmission?: TransmissionMode | null;
+  /**
+   * Immersive War Mode only (see WarModeMode below) -- per-lap and final
+   * times in milliseconds, captured live by the Dolphin telemetry bridge
+   * (lib/telemetry/events.ts) and copied over once the race finalizes.
+   * Always null for Manual and Battle Mode races, and for every race
+   * recorded before Immersive mode existed -- never required or assumed
+   * present by the core stats layer (points/standings never read these).
+   * Lap 0 is dropped at ingestion, so these are always real laps 1-3.
+   * Circuit Records (lib/stats/circuit-records.ts) are the only consumer.
+   */
+  adiLap1TimeMs?: number | null;
+  adiLap2TimeMs?: number | null;
+  adiLap3TimeMs?: number | null;
+  adiFinalTimeMs?: number | null;
+  renLap1TimeMs?: number | null;
+  renLap2TimeMs?: number | null;
+  renLap3TimeMs?: number | null;
+  renFinalTimeMs?: number | null;
 }
 
 /**
@@ -131,6 +159,46 @@ export interface RawSeason {
    */
   guestEnabled?: boolean;
   guestJoinedAt?: string | null;
+  /**
+   * Immersive War Mode (section 1-2 of the integration spec): "manual" is
+   * the original, fully-unchanged flow (addRaceAction + manual position
+   * entry); "immersive" means the Dolphin telemetry bridge drives live
+   * tracking and auto-finalizes races. Undefined/omitted means "manual" --
+   * every season recorded before Immersive mode existed is implicitly
+   * manual, never backfilled.
+   */
+  mode?: WarModeMode;
+  /**
+   * Immersive only. "same-device" is one screen/one Dolphin instance for
+   * both players (the common case); "dual-device" additionally reuses the
+   * existing battleCode/adiJoinedAt/renJoinedAt join infrastructure above
+   * so a second device can spectate the live dashboard.
+   */
+  displayConfig?: DisplayConfig;
+  /**
+   * Immersive only. Which raw tracked Dolphin slot (1 or 2) is adi vs ren,
+   * set once during Player Assignment. The telemetry bridge resolves
+   * every incoming event's slot through this (see resolveSlotToPlayer in
+   * lib/telemetry/events.ts) before anything is persisted -- nothing
+   * downstream of ingestion ever sees a raw slot number.
+   */
+  adiTelemetrySlot?: 1 | 2 | null;
+  renTelemetrySlot?: 1 | 2 | null;
+  /**
+   * Immersive only. Each player's chosen character/kart/transmission for
+   * the whole season, set once during Player Assignment (reusing the
+   * existing Kart Kontrol rosters/components -- lib/data/characters.ts,
+   * karts.ts -- rather than a new concept). Unlike Battle Mode's Kart
+   * Kontrol, which re-picks per round, Immersive mode fixes the loadout
+   * for the season; copied onto every race as it finalizes, same columns
+   * RawRace already has from Kart Kontrol.
+   */
+  adiCharacter?: string | null;
+  adiKart?: string | null;
+  adiTransmission?: TransmissionMode | null;
+  renCharacter?: string | null;
+  renKart?: string | null;
+  renTransmission?: TransmissionMode | null;
 }
 
 // ============================================================================
@@ -241,4 +309,45 @@ export interface RaceInput {
   renFinishingPosition: number;
   /** Battle Mode, 3-driver seasons only. Omitted/undefined for every other race. */
   guestFinishingPosition?: number | null;
+  /** Immersive only -- see the matching fields on RawRace above. */
+  adiLap1TimeMs?: number | null;
+  adiLap2TimeMs?: number | null;
+  adiLap3TimeMs?: number | null;
+  adiFinalTimeMs?: number | null;
+  renLap1TimeMs?: number | null;
+  renLap2TimeMs?: number | null;
+  renLap3TimeMs?: number | null;
+  renFinalTimeMs?: number | null;
+}
+
+// ============================================================================
+// Immersive War Mode -- permanent per-race telemetry detail. Unlike
+// live_telemetry_events (ephemeral, cleared once a race finalizes -- see
+// lib/telemetry/events.ts), these two tables are the permanent record a
+// finalized Immersive race carries forever: the full position-over-time
+// timeline (for the live position graph during the race, and the
+// Season Rewind position graph afterward) and the full item-received
+// timeline (for the Season Rewind powerup graph). Both are written once,
+// at finalize time, from the same live_telemetry_events rows that drove
+// the live dashboard -- never reconstructed after the fact (spec section
+// 8: "save complete position-time data with each race at finish, not
+// reconstructed").
+// ============================================================================
+
+/** One timestamped position reading for one player, during one race. */
+export interface RacePositionSample {
+  raceId: string;
+  playerId: PlayerId;
+  tsMs: number; // elapsed ms since the race started
+  position: number;
+  lap: number; // always 1-3 -- lap 0 is dropped before this table ever sees a row
+}
+
+/** One timestamped item pickup for one player, during one race. */
+export interface RaceItemEvent {
+  raceId: string;
+  playerId: PlayerId;
+  tsMs: number;
+  itemId: ItemId;
+  lap: number;
 }

@@ -3,31 +3,27 @@ import { ChevronRight } from "lucide-react";
 import { getStore } from "@/lib/db";
 import { buildTomfooleryStats } from "@/lib/stats/tomfoolery";
 import { BlueShellTally } from "@/components/tomfoolery/BlueShellTally";
-import { PowerupBreakdown } from "@/components/tomfoolery/PowerupBreakdown";
-import { TrackMayhemTable } from "@/components/tomfoolery/TrackMayhemTable";
-import { SeasonMayhemTable } from "@/components/tomfoolery/SeasonMayhemTable";
+import { CumulativeTomfooleryTable } from "@/components/tomfoolery/CumulativeTomfooleryTable";
 import { SectionHeading } from "@/components/ui/Card";
 
 /**
- * The Battle Mode summary page: blue shells taken and power-ups received,
- * aggregated across every race that carries battle-mode data. Kept
- * completely separate from loadStatsModel()/buildStatsModel() — this data
- * only exists for battle-recorded races (a partial dataset), unlike the
- * core stats pipeline which assumes every race is complete.
+ * The Battle Mode / Immersive War Mode summary page: blue shells taken
+ * and power-ups received, aggregated across every race that carries that
+ * data. Kept completely separate from loadStatsModel()/buildStatsModel()
+ * — this data only exists for battle-recorded races (a partial dataset),
+ * unlike the core stats pipeline which assumes every race is complete.
+ *
+ * Season 20+: one flat cumulative item table, no more by-track/by-season
+ * breakdowns — see CumulativeTomfooleryTable and buildTomfooleryStats.
  */
 export default async function TomfooleryTalesPage() {
   const store = getStore();
-  const [racesBySeasonId, racePowerups, circuits, seasons] = await Promise.all([
-    store.getRacesBySeasonId(),
-    store.getRacePowerups(),
-    store.getCircuits(),
-    store.getSeasons(),
-  ]);
+  const [racesBySeasonId, racePowerups] = await Promise.all([store.getRacesBySeasonId(), store.getRacePowerups()]);
   const races = [...racesBySeasonId.values()].flat();
-  const stats = buildTomfooleryStats(races, racePowerups, circuits, seasons);
+  const stats = buildTomfooleryStats(races, racePowerups);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-14 sm:py-20 space-y-14">
+    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-14 sm:py-20 space-y-14">
       <SectionHeading
         eyebrow="Battle Mode"
         title="Tomfoolery Tales"
@@ -35,8 +31,8 @@ export default async function TomfooleryTalesPage() {
 
       {stats.battleRacesRecorded === 0 ? (
         <p className="text-sm text-text-faint">
-          No Battle Mode races recorded yet — play a season in Battle Mode to start tracking blue shells and
-          power-ups here.
+          No Battle Mode races recorded yet — play a season in Battle Mode or Immersive War Mode to start tracking
+          blue shells and power-ups here.
         </p>
       ) : (
         <>
@@ -49,22 +45,10 @@ export default async function TomfooleryTalesPage() {
           </div>
 
           <div>
-            <p className="font-hud text-xs font-bold tracking-[0.2em] text-text-faint uppercase mb-4">Power-up Log</p>
-            <PowerupBreakdown stats={stats} />
-          </div>
-
-          <div>
             <p className="font-hud text-xs font-bold tracking-[0.2em] text-text-faint uppercase mb-4">
-              By Track — where the mayhem happens
+              Power-up Log — {stats.totalPowerupsLogged.adi + stats.totalPowerupsLogged.ren} items logged, all-time
             </p>
-            <TrackMayhemTable rows={stats.byTrack} />
-          </div>
-
-          <div>
-            <p className="font-hud text-xs font-bold tracking-[0.2em] text-text-faint uppercase mb-4">
-              By Season
-            </p>
-            <SeasonMayhemTable rows={stats.bySeason} />
+            <CumulativeTomfooleryTable rows={stats.items} />
           </div>
         </>
       )}

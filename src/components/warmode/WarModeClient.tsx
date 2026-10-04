@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import type { Circuit, PointsMapping, RawRace, RawSeason } from "@/lib/types";
 import { RACES_PER_SEASON } from "@/lib/types";
-import { buildRaceStats, calculateSeasonTotals, determineSeasonWinner, calculateCircuitStats } from "@/lib/stats";
+import { buildRaceStats, calculateSeasonTotals, determineSeasonWinner, calculateCircuitStats, buildCircuitRecords, getCircuitRecord } from "@/lib/stats";
 import { abandonSeasonAction, addRaceAction } from "@/app/war-mode/actions";
 import { LiveLeaderboard } from "./LiveLeaderboard";
 import { CircuitPicker } from "./CircuitPicker";
@@ -87,6 +87,15 @@ export function WarModeClient({
     });
     return calculateCircuitStats(seasonStats, selectedCircuit);
   }, [selectedCircuit, allSeasonsForStats, circuitsById, pointsMapping]);
+
+  // Every race across every season, Manual included -- buildCircuitRecords
+  // simply finds nothing on races with no lap-time columns, so mixing
+  // modes here is harmless (see circuit-records.ts).
+  const circuitRecords = useMemo(
+    () => buildCircuitRecords(allSeasonsForStats.flatMap(({ races: r }) => r)),
+    [allSeasonsForStats],
+  );
+  const selectedCircuitRecord = selectedCircuit ? getCircuitRecord(circuitRecords, selectedCircuit.id) : null;
 
   const handleAbandon = () => {
     setAbandonError(null);
@@ -220,6 +229,7 @@ export function WarModeClient({
                   <CircuitPreviewPanel
                     circuit={selectedCircuit}
                     stat={selectedCircuitStat}
+                    record={selectedCircuitRecord}
                     raceNumber={nextRaceNumber}
                     onBack={() => {
                       setSelectedCircuitId(null);
@@ -260,7 +270,7 @@ export function WarModeClient({
         {raceStats.length === 0 ? (
           <p className="text-sm text-text-faint">No races recorded yet — pick a circuit above to log the first one.</p>
         ) : (
-          <RaceTable races={[...raceStats].reverse()} />
+          <RaceTable races={[...raceStats].reverse()} circuitRecords={circuitRecords} />
         )}
       </div>
     </div>

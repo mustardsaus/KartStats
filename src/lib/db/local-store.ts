@@ -1,4 +1,5 @@
-import type { BattleRound, Circuit, DriverId, PointsMapping, RawRace, RawSeason, RaceInput, RacePowerup, RoundPowerup } from "@/lib/types";
+import type { BattleRound, Circuit, DisplayConfig, DriverId, PointsMapping, RawRace, RawSeason, RaceInput, RaceItemEvent, RacePositionSample, RacePowerup, RoundPowerup } from "@/lib/types";
+import type { StoredTelemetryEvent } from "@/lib/telemetry/events";
 import { RACES_PER_SEASON } from "@/lib/types";
 import { CIRCUITS } from "@/lib/data/circuits";
 import { DEFAULT_POINTS_MAPPING, PLAYERS } from "@/lib/data/points-mapping";
@@ -15,6 +16,10 @@ interface LocalState {
   battleRounds: Map<string, BattleRound>;
   roundPowerups: Map<string, RoundPowerup[]>; // keyed by battleRoundId
   racePowerups: RacePowerup[];
+  // Immersive War Mode -- see db/types.ts's "Immersive War Mode" section.
+  liveTelemetryEvents: Map<string, StoredTelemetryEvent[]>; // keyed by `${seasonId}:${raceNumber}`
+  racePositionSamples: RacePositionSample[];
+  raceItemEvents: RaceItemEvent[];
 }
 
 function loadInitialState(): LocalState {
@@ -35,6 +40,9 @@ function loadInitialState(): LocalState {
     battleRounds: new Map(),
     roundPowerups: new Map(),
     racePowerups: [],
+    liveTelemetryEvents: new Map(),
+    racePositionSamples: [],
+    raceItemEvents: [],
   };
 }
 
@@ -114,6 +122,15 @@ export const localStore: DataStore = {
       renFinishingPosition: input.renFinishingPosition,
       createdAt: new Date().toISOString(),
       guestFinishingPosition: input.guestFinishingPosition ?? null,
+      // Immersive only -- undefined on every Manual/Battle Mode RaceInput, so these stay undefined (not fabricated null) exactly like the omitted-field convention elsewhere on RawRace.
+      adiLap1TimeMs: input.adiLap1TimeMs ?? null,
+      adiLap2TimeMs: input.adiLap2TimeMs ?? null,
+      adiLap3TimeMs: input.adiLap3TimeMs ?? null,
+      adiFinalTimeMs: input.adiFinalTimeMs ?? null,
+      renLap1TimeMs: input.renLap1TimeMs ?? null,
+      renLap2TimeMs: input.renLap2TimeMs ?? null,
+      renLap3TimeMs: input.renLap3TimeMs ?? null,
+      renFinalTimeMs: input.renFinalTimeMs ?? null,
     };
     state.racesBySeasonId.set(seasonId, [...existing, race]);
     return race;
@@ -390,5 +407,95 @@ export const localStore: DataStore = {
         state.roundPowerups.delete(roundId);
       }
     }
+  },
+
+  // --- Immersive War Mode ------------------------------------------------
+
+  async startImmersiveSeason(displayConfig: DisplayConfig) {
+    const seasonNumber = nextSeasonNumber();
+    let battleCode: string | null = null;
+    if (displayConfig === "dual-device") {
+      battleCode = generateBattleCode();
+      while (state.seasons.some((s) => s.battleCode === battleCode)) battleCode = generateBattleCode();
+    }
+    const season: RawSeason = {
+      id: `season-${seasonNumber}-${Date.now()}`,
+      seasonNumber,
+      startDate: new Date().toISOString(),
+      completionDate: null,
+      isComplete: false,
+      winnerId: null,
+      adiFinalPoints: null,
+      renFinalPoints: null,
+      createdAt: new Date().toISOString(),
+      mode: "immersive",
+      displayConfig,
+      adiTelemetrySlot: null,
+      renTelemetrySlot: null,
+      adiCharacter: null,
+      adiKart: null,
+      adiTransmission: null,
+      renCharacter: null,
+      renKart: null,
+      renTransmission: null,
+      ...(battleCode ? { battleCode, adminPlayerId: null, adiJoinedAt: null, renJoinedAt: null } : {}),
+    };
+    state.seasons.push(season);
+    state.racesBySeasonId.set(season.id, []);
+    return season;
+  },
+
+  async setSeasonTelemetrySlots(seasonId, adiSlot, renSlot) {
+    const season = state.seasons.find((s) => s.id === seasonId);
+    if (!season) throw new Error("Season not found");
+    season.adiTelemetrySlot = adiSlot;
+    season.renTelemetrySlot = renSlot;
+    return season;
+  },
+
+  async setSeasonImmersiveLoadout(seasonId, loadout) {
+    const season = state.seasons.find((s) => s.id === seasonId);
+    if (!season) throw new Error("Season not found");
+    season.adiCharacter = loadout.adiCharacter;
+    season.adiKart = loadout.adiKart;
+    season.adiTransmission = loadout.adiTransmission;
+    season.renCharacter = loadout.renCharacter;
+    season.renKart = loadout.renKart;
+    season.renTransmission = loadout.renTransmission;
+    return season;
+  },
+
+  async ingestTelemetryEvents(seasonId, raceNumber, events) {
+    const key = `${seasonId}:${raceNumber}`;
+    const existing = state.liveTelemetryEvents.get(key) ?? [];
+    state.liveTelemetryEvents.set(key, [...existing, ...events]);
+  },
+
+  async getLiveTelemetryEvents(seasonId, raceNumber) {
+    return state.liveTelemetryEvents.get(`${seasonId}:${raceNumber}`) ?? [];
+  },
+
+  async clearLiveTelemetryEvents(seasonId, raceNumber) {
+    state.liveTelemetryEvents.delete(`${seasonId}:${raceNumber}`);
+  },
+
+  async addRacePositionSamples(raceId, samples) {
+    state.racePositionSamples.push(...samples.map((s) => ({ ...s, raceId })));
+  },
+
+  async getRacePositionSamples(raceId) {
+    return state.racePositionSamples.filter((s) => s.raceId === raceId);
+  },
+
+  async addRaceItemEvents(raceId, events) {
+    state.raceItemEvents.push(...events.map((e) => ({ ...e, raceId })));
+  },
+
+  async getRaceItemEvents(raceId) {
+    return state.raceItemEvents.filter((e) => e.raceId === raceId);
+  },
+
+  async addRacePowerups(raceId, powerups) {
+    state.racePowerups.push(...powerups.map((p) => ({ ...p, raceId })));
   },
 };

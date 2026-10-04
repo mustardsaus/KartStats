@@ -55,7 +55,12 @@ export default async function SeasonDetailPage({ params }: PageProps<"/season-re
         <p className="font-hud text-xs font-bold tracking-[0.2em] text-text-faint uppercase mb-3">
           Full Race Log
         </p>
-        <RaceTable races={season.races} showGuest={Boolean(season.season.guestEnabled)} pointsMapping={pointsMapping} />
+        <RaceTable
+          races={season.races}
+          showGuest={Boolean(season.season.guestEnabled)}
+          pointsMapping={pointsMapping}
+          circuitRecords={model.circuitRecords}
+        />
       </div>
 
       <div className="flex items-center justify-between">

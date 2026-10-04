@@ -1,4 +1,5 @@
-import type { BattleRound, Circuit, DriverId, ItemId, PlayerId, PointsMapping, RawRace, RawSeason, RaceInput, RacePowerup, RoundPowerup, TransmissionMode } from "@/lib/types";
+import type { BattleRound, Circuit, DisplayConfig, DriverId, ItemId, PlayerId, PointsMapping, RawRace, RawSeason, RaceInput, RaceItemEvent, RacePositionSample, RacePowerup, RoundPowerup, TransmissionMode } from "@/lib/types";
+import type { StoredTelemetryEvent } from "@/lib/telemetry/events";
 import { RACES_PER_SEASON } from "@/lib/types";
 import { PLAYERS } from "@/lib/data/points-mapping";
 import { generateBattleCode } from "@/lib/data/battle-code";
@@ -34,6 +35,17 @@ interface SeasonRow {
   ren_joined_at?: string | null;
   guest_enabled?: boolean | null;
   guest_joined_at?: string | null;
+  // Immersive War Mode -- see db/types.ts's "Immersive War Mode" section.
+  mode?: "manual" | "immersive" | null;
+  display_config?: "same-device" | "dual-device" | null;
+  adi_telemetry_slot?: 1 | 2 | null;
+  ren_telemetry_slot?: 1 | 2 | null;
+  adi_character?: string | null;
+  adi_kart?: string | null;
+  adi_transmission?: TransmissionMode | null;
+  ren_character?: string | null;
+  ren_kart?: string | null;
+  ren_transmission?: TransmissionMode | null;
 }
 function rowToSeason(r: SeasonRow): RawSeason {
   return {
@@ -52,6 +64,16 @@ function rowToSeason(r: SeasonRow): RawSeason {
     renJoinedAt: r.ren_joined_at ?? null,
     guestEnabled: r.guest_enabled ?? false,
     guestJoinedAt: r.guest_joined_at ?? null,
+    mode: r.mode ?? undefined,
+    displayConfig: r.display_config ?? undefined,
+    adiTelemetrySlot: r.adi_telemetry_slot ?? null,
+    renTelemetrySlot: r.ren_telemetry_slot ?? null,
+    adiCharacter: r.adi_character ?? null,
+    adiKart: r.adi_kart ?? null,
+    adiTransmission: r.adi_transmission ?? null,
+    renCharacter: r.ren_character ?? null,
+    renKart: r.ren_kart ?? null,
+    renTransmission: r.ren_transmission ?? null,
   };
 }
 
@@ -73,6 +95,15 @@ interface RaceRow {
   ren_character?: string | null;
   ren_kart?: string | null;
   ren_transmission?: TransmissionMode | null;
+  // Immersive War Mode only -- see RawRace in lib/types.ts.
+  adi_lap1_time_ms?: number | null;
+  adi_lap2_time_ms?: number | null;
+  adi_lap3_time_ms?: number | null;
+  adi_final_time_ms?: number | null;
+  ren_lap1_time_ms?: number | null;
+  ren_lap2_time_ms?: number | null;
+  ren_lap3_time_ms?: number | null;
+  ren_final_time_ms?: number | null;
 }
 function rowToRace(r: RaceRow): RawRace {
   return {
@@ -93,6 +124,14 @@ function rowToRace(r: RaceRow): RawRace {
     renCharacter: r.ren_character ?? null,
     renKart: r.ren_kart ?? null,
     renTransmission: r.ren_transmission ?? null,
+    adiLap1TimeMs: r.adi_lap1_time_ms ?? null,
+    adiLap2TimeMs: r.adi_lap2_time_ms ?? null,
+    adiLap3TimeMs: r.adi_lap3_time_ms ?? null,
+    adiFinalTimeMs: r.adi_final_time_ms ?? null,
+    renLap1TimeMs: r.ren_lap1_time_ms ?? null,
+    renLap2TimeMs: r.ren_lap2_time_ms ?? null,
+    renLap3TimeMs: r.ren_lap3_time_ms ?? null,
+    renFinalTimeMs: r.ren_final_time_ms ?? null,
   };
 }
 
@@ -161,6 +200,38 @@ interface RacePowerupRow {
 }
 function rowToRacePowerup(r: RacePowerupRow): RacePowerup {
   return { raceId: r.race_id, playerId: r.player_id, itemId: r.item_id, count: r.count };
+}
+
+// --- Immersive War Mode row <-> domain-type mapping ------------------------
+
+interface LiveTelemetryEventRow {
+  season_id: string;
+  race_number: number;
+  event_type: string;
+  ts_ms: number;
+  payload: StoredTelemetryEvent;
+}
+
+interface RacePositionSampleRow {
+  race_id: string;
+  player_id: PlayerId;
+  ts_ms: number;
+  position: number;
+  lap: number;
+}
+function rowToRacePositionSample(r: RacePositionSampleRow): RacePositionSample {
+  return { raceId: r.race_id, playerId: r.player_id, tsMs: r.ts_ms, position: r.position, lap: r.lap };
+}
+
+interface RaceItemEventRow {
+  race_id: string;
+  player_id: PlayerId;
+  ts_ms: number;
+  item_id: ItemId;
+  lap: number;
+}
+function rowToRaceItemEvent(r: RaceItemEventRow): RaceItemEvent {
+  return { raceId: r.race_id, playerId: r.player_id, tsMs: r.ts_ms, itemId: r.item_id, lap: r.lap };
 }
 
 export const supabaseStore: DataStore = {
@@ -275,6 +346,14 @@ export const supabaseStore: DataStore = {
         adi_finishing_position: input.adiFinishingPosition,
         ren_finishing_position: input.renFinishingPosition,
         guest_finishing_position: input.guestFinishingPosition ?? null,
+        adi_lap1_time_ms: input.adiLap1TimeMs ?? null,
+        adi_lap2_time_ms: input.adiLap2TimeMs ?? null,
+        adi_lap3_time_ms: input.adiLap3TimeMs ?? null,
+        adi_final_time_ms: input.adiFinalTimeMs ?? null,
+        ren_lap1_time_ms: input.renLap1TimeMs ?? null,
+        ren_lap2_time_ms: input.renLap2TimeMs ?? null,
+        ren_lap3_time_ms: input.renLap3TimeMs ?? null,
+        ren_final_time_ms: input.renFinalTimeMs ?? null,
       })
       .select()
       .single();
@@ -675,6 +754,169 @@ export const supabaseStore: DataStore = {
   async deleteEmptySeason(seasonId: string) {
     const supabase = getSupabaseServerClient();
     const { error } = await supabase.from("seasons").delete().eq("id", seasonId);
+    if (error) throw error;
+  },
+
+  // --- Immersive War Mode ----------------------------------------------
+
+  async startImmersiveSeason(displayConfig: DisplayConfig) {
+    const supabase = getSupabaseServerClient();
+    const { data: existing, error: fetchErr } = await supabase
+      .from("seasons")
+      .select("season_number")
+      .order("season_number", { ascending: false })
+      .limit(1);
+    if (fetchErr) throw fetchErr;
+    const nextNumber = ((existing?.[0]?.season_number as number | undefined) ?? 0) + 1;
+
+    const baseInsert = { season_number: nextNumber, is_complete: false, mode: "immersive", display_config: displayConfig };
+
+    if (displayConfig !== "dual-device") {
+      const { data, error } = await supabase.from("seasons").insert(baseInsert).select().single();
+      if (error) throw error;
+      return rowToSeason(data as SeasonRow);
+    }
+
+    // Dual Device reuses Battle Mode's unique battle_code join
+    // infrastructure -- same retry-on-collision pattern as
+    // startBattleSeason above, not a second pairing mechanism.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = generateBattleCode();
+      const { data, error } = await supabase
+        .from("seasons")
+        .insert({ ...baseInsert, battle_code: code })
+        .select()
+        .single();
+      if (!error) return rowToSeason(data as SeasonRow);
+      if (error.code !== "23505") throw error; // not a uniqueness collision — a real error
+    }
+    throw new Error("Could not generate a unique battle code after several attempts — try again.");
+  },
+
+  async setSeasonTelemetrySlots(seasonId: string, adiSlot: 1 | 2, renSlot: 1 | 2) {
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("seasons")
+      .update({ adi_telemetry_slot: adiSlot, ren_telemetry_slot: renSlot })
+      .eq("id", seasonId)
+      .select()
+      .single();
+    if (error) throw error;
+    return rowToSeason(data as SeasonRow);
+  },
+
+  async setSeasonImmersiveLoadout(
+    seasonId: string,
+    loadout: {
+      adiCharacter: string | null;
+      adiKart: string | null;
+      adiTransmission: TransmissionMode | null;
+      renCharacter: string | null;
+      renKart: string | null;
+      renTransmission: TransmissionMode | null;
+    }
+  ) {
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("seasons")
+      .update({
+        adi_character: loadout.adiCharacter,
+        adi_kart: loadout.adiKart,
+        adi_transmission: loadout.adiTransmission,
+        ren_character: loadout.renCharacter,
+        ren_kart: loadout.renKart,
+        ren_transmission: loadout.renTransmission,
+      })
+      .eq("id", seasonId)
+      .select()
+      .single();
+    if (error) throw error;
+    return rowToSeason(data as SeasonRow);
+  },
+
+  async ingestTelemetryEvents(seasonId: string, raceNumber: number, events: StoredTelemetryEvent[]) {
+    if (events.length === 0) return;
+    const supabase = getSupabaseServerClient();
+    const { error } = await supabase.from("live_telemetry_events").insert(
+      events.map((e) => ({
+        season_id: seasonId,
+        race_number: raceNumber,
+        event_type: e.type,
+        ts_ms: e.tsMs,
+        payload: e,
+      }))
+    );
+    if (error) throw error;
+  },
+
+  async getLiveTelemetryEvents(seasonId: string, raceNumber: number) {
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("live_telemetry_events")
+      .select("*")
+      .eq("season_id", seasonId)
+      .eq("race_number", raceNumber)
+      .order("ts_ms");
+    if (error) throw error;
+    return (data as LiveTelemetryEventRow[]).map((r) => r.payload);
+  },
+
+  async clearLiveTelemetryEvents(seasonId: string, raceNumber: number) {
+    const supabase = getSupabaseServerClient();
+    const { error } = await supabase
+      .from("live_telemetry_events")
+      .delete()
+      .eq("season_id", seasonId)
+      .eq("race_number", raceNumber);
+    if (error) throw error;
+  },
+
+  async addRacePositionSamples(raceId: string, samples: RacePositionSample[]) {
+    if (samples.length === 0) return;
+    const supabase = getSupabaseServerClient();
+    const { error } = await supabase.from("race_position_samples").insert(
+      samples.map((s) => ({ race_id: raceId, player_id: s.playerId, ts_ms: s.tsMs, position: s.position, lap: s.lap }))
+    );
+    if (error) throw error;
+  },
+
+  async getRacePositionSamples(raceId: string) {
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("race_position_samples")
+      .select("*")
+      .eq("race_id", raceId)
+      .order("ts_ms");
+    if (error) throw error;
+    return (data as RacePositionSampleRow[]).map(rowToRacePositionSample);
+  },
+
+  async addRaceItemEvents(raceId: string, events: RaceItemEvent[]) {
+    if (events.length === 0) return;
+    const supabase = getSupabaseServerClient();
+    const { error } = await supabase.from("race_item_events").insert(
+      events.map((e) => ({ race_id: raceId, player_id: e.playerId, ts_ms: e.tsMs, item_id: e.itemId, lap: e.lap }))
+    );
+    if (error) throw error;
+  },
+
+  async getRaceItemEvents(raceId: string) {
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("race_item_events")
+      .select("*")
+      .eq("race_id", raceId)
+      .order("ts_ms");
+    if (error) throw error;
+    return (data as RaceItemEventRow[]).map(rowToRaceItemEvent);
+  },
+
+  async addRacePowerups(raceId: string, powerups: RacePowerup[]) {
+    if (powerups.length === 0) return;
+    const supabase = getSupabaseServerClient();
+    const { error } = await supabase.from("race_powerups").insert(
+      powerups.map((p) => ({ race_id: raceId, player_id: p.playerId, item_id: p.itemId, count: p.count }))
+    );
     if (error) throw error;
   },
 };

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { BattleRound, Circuit, DriverId, PointsMapping, RawRace, RawSeason } from "@/lib/types";
-import { buildRaceStats, calculateSeasonTotals, calculateCircuitStats } from "@/lib/stats";
+import { buildRaceStats, calculateSeasonTotals, calculateCircuitStats, buildCircuitRecords, getCircuitRecord } from "@/lib/stats";
 import { slideIn } from "@/lib/animation";
 import { CircuitPreviewPanel } from "@/components/warmode/CircuitPreviewPanel";
 import { BlueShellButton } from "./BlueShellButton";
@@ -93,6 +93,13 @@ export function Cockpit({
     return calculateCircuitStats(seasonStats, circuit);
   }, [circuit, historicalSeasons, historicalRacesBySeasonId, season, races, circuitsById, pointsMapping]);
 
+  // Same mixed-mode-is-harmless reasoning as WarModeClient's identical block.
+  const circuitRecord = useMemo(() => {
+    if (!circuit) return null;
+    const historicalRaces = historicalSeasons.flatMap((s) => historicalRacesBySeasonId.get(s.id) ?? []);
+    return getCircuitRecord(buildCircuitRecords([...historicalRaces, ...races]), circuit.id);
+  }, [circuit, historicalSeasons, historicalRacesBySeasonId, races]);
+
   // Kart Kontrol (Season 15+): loadout is now collected by the parent
   // (BattleModeClient) BEFORE a track is even picked — matching the real
   // game's character-then-course order — so by the time this component
@@ -121,7 +128,7 @@ export function Cockpit({
               should always resolve from round.circuitId — the fallback below
               is defensive, not an expected path. */}
           {circuit ? (
-            <CircuitPreviewPanel circuit={circuit} stat={circuitStat} raceNumber={round.raceNumber} />
+            <CircuitPreviewPanel circuit={circuit} stat={circuitStat} record={circuitRecord} raceNumber={round.raceNumber} />
           ) : (
             <p className="text-center font-display text-2xl text-paper">Race {round.raceNumber} of 32</p>
           )}

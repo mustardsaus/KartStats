@@ -14,12 +14,14 @@ import {
   calculateRaceWins,
 } from "./career";
 import { calculateStrongestTracks, calculateWeakestTracks, calculateAllCircuitStats } from "./circuit";
+import { buildCircuitRecords } from "./circuit-records";
 
 export * from "./types";
 export * from "./points";
 export * from "./season";
 export * from "./career";
 export * from "./circuit";
+export * from "./circuit-records";
 export * from "./trendline";
 export * from "./kart-kontrol";
 export { median, average, safeDivide, round } from "./math";
@@ -45,6 +47,12 @@ export function buildStatsModel(
     );
 
   const circuitStats = calculateAllCircuitStats(seasonStats, circuits);
+
+  // Circuit Records (Fastest Lap / Race Record) only ever derive from
+  // Immersive races' lap-time columns -- scan every race across every
+  // season, same flattening buildSeasonStat already does per-season.
+  const allRaces: RawRace[] = [...racesBySeasonId.values()].flat();
+  const circuitRecords = buildCircuitRecords(allRaces);
 
   const playerCareer = (playerId: PlayerId): PlayerCareerStat => {
     const strongest = calculateStrongestTracks(seasonStats, circuits, playerId, 1)[0];
@@ -85,6 +93,7 @@ export function buildStatsModel(
     seasons: seasonStats,
     circuits: circuitStats,
     circuitsById,
+    circuitRecords,
     players: {
       adi: playerCareer("adi"),
       ren: playerCareer("ren"),
