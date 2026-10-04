@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import type { Circuit, PlayerId, PointsMapping, RawRace, RawSeason } from "@/lib/types";
+import type { Circuit, PointsMapping, RawRace, RawSeason } from "@/lib/types";
 import { RACES_PER_SEASON } from "@/lib/types";
 import type { StoredTelemetryEvent } from "@/lib/telemetry/events";
 import { getImmersiveStateAction, abandonImmersiveSeasonAction } from "@/app/war-mode/immersive-actions";
@@ -11,20 +11,10 @@ import { CircuitPreviewPanel } from "../CircuitPreviewPanel";
 import { LiveLeaderboard } from "../LiveLeaderboard";
 import { SeasonCompletionScreen } from "../SeasonCompletionScreen";
 import { RaceResultPanel } from "./RaceResultPanel";
-import { PLAYERS } from "@/lib/data/points-mapping";
 import { Loader2, Radio, Copy, Check } from "lucide-react";
 
-type PositionUpdateEvent = Extract<StoredTelemetryEvent, { type: "position-update" }>;
 
 /** Most recent position-update event for one player — events arrive in order, so the last match IS the latest. */
-function latestPosition(events: StoredTelemetryEvent[], playerId: PlayerId): PositionUpdateEvent | undefined {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e.type === "position-update" && e.playerId === playerId) return e;
-  }
-  return undefined;
-}
-
 interface Props {
   initialSeason: RawSeason;
   initialRaces: RawRace[];
@@ -178,10 +168,9 @@ export function ImmersiveModeClient({
       ) : currentCircuit ? (
         <div className="space-y-5">
           <CircuitPreviewPanel circuit={currentCircuit} stat={circuitStat} record={circuitRecord} raceNumber={races.length + 1} />
-          <div className="grid grid-cols-2 gap-3">
-            <LiveStatusCard playerId="adi" positionEvent={latestPosition(liveEvents, "adi")} />
-            <LiveStatusCard playerId="ren" positionEvent={latestPosition(liveEvents, "ren")} />
-          </div>
+          <p className="text-center text-sm text-text-dim flex items-center justify-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-danger" /> Race in progress &mdash; results, lap splits and the position graph appear when it ends.
+          </p>
         </div>
       ) : (
         <div className="text-center py-20">
@@ -205,26 +194,6 @@ export function ImmersiveModeClient({
     </div>
   );
 }
-
-function LiveStatusCard({ playerId, positionEvent }: { playerId: PlayerId; positionEvent: PositionUpdateEvent | undefined }) {
-  const accent = playerId === "adi" ? "var(--color-adi)" : "var(--color-ren)";
-  return (
-    <div className="rounded-xl border border-border bg-surface px-4 py-3 text-center">
-      <p className="font-hud text-xs font-bold tracking-wide" style={{ color: accent }}>
-        {PLAYERS[playerId].name.toUpperCase()}
-      </p>
-      {positionEvent ? (
-        <>
-          <p className="text-stat text-2xl font-bold text-text">P{positionEvent.position}</p>
-          <p className="text-xs text-text-faint">Lap {positionEvent.lap}</p>
-        </>
-      ) : (
-        <p className="text-sm text-text-faint mt-2">Starting&hellip;</p>
-      )}
-    </div>
-  );
-}
-
 
 /**
  * The Dolphin tracker's --season-id flag needs this exact id -- there's

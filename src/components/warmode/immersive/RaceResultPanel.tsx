@@ -49,13 +49,15 @@ export function RaceResultPanel({ race, circuitName }: { race: RawRace; circuitN
         <ResultCard
           playerId="adi"
           position={race.adiFinishingPosition}
-          timeMs={race.adiFinalTimeMs}
+          finalMs={race.adiFinalTimeMs}
+          laps={[race.adiLap1TimeMs, race.adiLap2TimeMs, race.adiLap3TimeMs]}
           winner={winner === "adi"}
         />
         <ResultCard
           playerId="ren"
           position={race.renFinishingPosition}
-          timeMs={race.renFinalTimeMs}
+          finalMs={race.renFinalTimeMs}
+          laps={[race.renLap1TimeMs, race.renLap2TimeMs, race.renLap3TimeMs]}
           winner={winner === "ren"}
         />
       </div>
@@ -80,22 +82,36 @@ export function RaceResultPanel({ race, circuitName }: { race: RawRace; circuitN
 function ResultCard({
   playerId,
   position,
-  timeMs,
+  finalMs,
+  laps,
   winner,
 }: {
   playerId: PlayerId;
   position: number;
-  timeMs: number | null | undefined;
+  finalMs: number | null | undefined;
+  laps: Array<number | null | undefined>;
   winner: boolean;
 }) {
   const accent = playerId === "adi" ? "var(--color-adi)" : "var(--color-ren)";
+  // No final time = never crossed the line: the race ends for everyone once
+  // the rest of the field finishes, so last place doesn't get to finish
+  // its lap -- that lap's split is simply absent, not a slow time.
+  const didNotFinish = finalMs == null;
   return (
     <div className={cn("rounded-xl border px-4 py-3", winner ? "border-gold/50 bg-gold/10" : "border-border bg-surface")}>
       <p className="font-hud text-xs font-bold tracking-wide" style={{ color: accent }}>
         {PLAYERS[playerId].name.toUpperCase()}
       </p>
       <p className="text-stat text-2xl font-bold text-text">P{position}</p>
-      <p className="text-xs text-text-faint">{formatTime(timeMs)}</p>
+      <p className="text-xs text-text-faint">{didNotFinish ? "Race ended before finishing" : formatTime(finalMs)}</p>
+      <div className="mt-2 space-y-0.5">
+        {laps.map((ms, i) => (
+          <p key={i} className="flex justify-between text-xs text-text-faint">
+            <span>Lap {i + 1}</span>
+            <span className="text-stat text-text-dim">{ms != null ? formatTime(ms) : "\u2014"}</span>
+          </p>
+        ))}
+      </div>
     </div>
   );
 }

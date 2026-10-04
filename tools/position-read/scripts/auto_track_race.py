@@ -178,6 +178,7 @@ REGIONS = [
 ]
 
 POLL_INTERVAL_S = 0.3
+TRACK_POLL_S = 0.1  # in-race polling: finer so lap/finish times are good to ~0.1s
 STALE_READS_TO_GIVE_UP = 8  # ~2.4s of bad reads -- treat the hook/pointer as gone
 RESCAN_INTERVAL_S = 0.5     # how often to retry finding Raceinfo if not found yet -- short,
                              # so the one-time discovery scan finishes as soon as possible
@@ -1371,7 +1372,23 @@ def wait_for_any_race_start(candidates, timeout_s: float, status_every_s: float 
     return None, None
 
 
-def _wait_for_other_player_finish(other_addr: int, race_num: int, telemetry, race_start: float, timeout_s: float = 60.0) -> None:
+def _log_player_change(race_num: int, label: str, prev, cur) -> None:
+    """Same wording for both players: 'player 1 overtakes, now p11' /
+    'player 2 dropped to p12' / 'player 1 -- lap 2/3 (p5)'. `prev`/`cur`
+    are read_player() tuples (pos, lap, maxlap, flags); prev may be None."""
+    if prev is None:
+        return
+    pos, lap = cur[0], cur[1]
+    if pos != prev[0]:
+        if pos < prev[0]:
+            print(f"[race {race_num}] {label} overtakes, now p{pos}  (was p{prev[0]}, lap {lap}/{STANDARD_LAP_COUNT})", flush=True)
+        else:
+            print(f"[race {race_num}] {label} dropped to p{pos}  (was p{prev[0]}, lap {lap}/{STANDARD_LAP_COUNT})", flush=True)
+    if lap != prev[1]:
+        print(f"[race {race_num}] {label} -- lap {lap}/{STANDARD_LAP_COUNT}  (p{pos})", flush=True)
+
+
+def _wait_for_other_player_finish(other_addr: int, race_num: int, telemetry, race_start: float, raceinfo_addr: int = None, timeout_s: float = 60.0) -> None:
     """KartStats bridge only. Our own primary/local player already
     finished (or left the race stage) and track_until_race_ends is about
     to return -- but the OTHER player might still be racing. Without this,
@@ -1389,21 +1406,26 @@ def _wait_for_other_player_finish(other_addr: int, race_num: int, telemetry, rac
     while time.time() < deadline:
         if not dme.is_hooked():
             return
+        # The race ends for EVERYONE once all the other racers (CPUs
+        # included) finish -- a last-place player never crosses the line.
+        if raceinfo_addr is not None:
+            stage = read_ptr(raceinfo_addr + RACEINFO_OFF_STAGE)
+            if stage is not None and stage != 2:
+                return
         cur = read_player(other_addr)
         if cur is None:
             stale += 1
             if stale >= STALE_READS_TO_GIVE_UP:
                 return
-            time.sleep(POLL_INTERVAL_S)
+            time.sleep(TRACK_POLL_S)
             continue
         stale = 0
         _pos, _lap, _maxlap, flags = cur
         ts_ms = int((time.time() - race_start) * 1000)
         telemetry.poll_slot(race_num, ts_ms, 2, cur, bool(flags & STATE_FINISHING))
-        telemetry.flush()
         if flags & STATE_FINISHING:
             return
-        time.sleep(POLL_INTERVAL_S)
+        time.sleep(TRACK_POLL_S)
 
 
 def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, telemetry=None):
@@ -1447,18 +1469,23 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
     itemhandler_scan_done = False  # one attempt per race -- see the call site's comment
     ptr_tracked = {}  # source_offset -> {"target", "window", "history", "retargets"}
 
-    other_addr = None
+    other_addr = _find_other_player_addr(raceinfo_addr, player_addr)
     other_last = None
+    clock_started = False  # lap/finish times count from GO (Raceinfo stage 2), not from the countdown
     if telemetry is not None:
         telemetry.start_race(race_num)
-        other_addr = _find_other_player_addr(raceinfo_addr, player_addr)
         if other_addr is None:
-            print(f"[race {race_num}] KartStats bridge: only found one player slot -- sending slot 1 only.", flush=True)
+            print(f"[race {race_num}] KartStats bridge: only found one other player slot -- player 2 will be missing.", flush=True)
+    if other_addr is not None:
+        other_first = read_player(other_addr)
+        if other_first is not None:
+            print(f"[race {race_num}] player 2 starting position: p{other_first[0]}", flush=True)
+            other_last = other_first
 
     first = read_player(player_addr)
     if first is not None:
         pos, lap, maxlap, _flags = first
-        print(f"[race {race_num}] starting position: {pos}  (lap {lap}/{STANDARD_LAP_COUNT})", flush=True)
+        print(f"[race {race_num}] player 1 starting position: p{pos}", flush=True)
         last = first
 
     while True:
@@ -1472,33 +1499,37 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
             stale += 1
             if stale >= STALE_READS_TO_GIVE_UP:
                 return (last[:3] if last else None), "struct_gone"
-            time.sleep(POLL_INTERVAL_S)
+            time.sleep(TRACK_POLL_S)
             continue
         stale = 0
 
         pos, lap, maxlap, flags = cur
-        if last is not None:
-            if pos != last[0]:
-                verb = "overtake -- now in" if pos < last[0] else "overtaken -- dropped to"
-                print(
-                    f"[race {race_num}] {verb} position {pos}  (was {last[0]}, lap {lap}/{STANDARD_LAP_COUNT})",
-                    flush=True,
-                )
-            elif lap != last[1]:
-                print(f"[race {race_num}] lap {lap}/{STANDARD_LAP_COUNT}  (position {pos})", flush=True)
+        _log_player_change(race_num, "player 1", last, cur)
         last = cur
 
-        if telemetry is not None:
+        other_cur = read_player(other_addr) if other_addr is not None else None
+        if other_cur is not None:
+            _log_player_change(race_num, "player 2", other_last, other_cur)
+            other_last_new = other_cur
+        else:
+            other_last_new = other_last
+
+        if telemetry is not None and stage == 2:
+            if not clock_started:
+                clock_started = True
+                race_start = time.time()
+                # Re-read the course at GO: if the early read (at the
+                # countdown) was stale/different, correct it -- the latest
+                # circuit-detected event wins on the KartStats side.
+                cid = find_course_id()
+                circ = bridge.COURSE_ID_TO_CIRCUIT_ID.get(cid) if cid is not None else None
+                if circ and circ != telemetry.circuit_id:
+                    telemetry.send_circuit_detected(race_num, circ)
             ts_ms = int((time.time() - race_start) * 1000)
             telemetry.poll_slot(race_num, ts_ms, 1, cur, bool(flags & STATE_FINISHING))
-            if other_addr is not None:
-                other_cur = read_player(other_addr)
-                if other_cur is not None:
-                    if other_last is not None and other_cur[0] != other_last[0]:
-                        print(f"[race {race_num}] player 2 -- position {other_cur[0]}  (was {other_last[0]}, lap {other_cur[1]}/{STANDARD_LAP_COUNT})", flush=True)
-                    other_last = other_cur
-                    telemetry.poll_slot(race_num, ts_ms, 2, other_cur, bool(other_cur[3] & STATE_FINISHING))
-            telemetry.flush()
+            if other_cur is not None:
+                telemetry.poll_slot(race_num, ts_ms, 2, other_cur, bool(other_cur[3] & STATE_FINISHING))
+        other_last = other_last_new
 
         if SCAN_PLAYER_ITEM:
             elapsed = round(time.time() - race_start, 1)
@@ -1607,28 +1638,22 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
 
         if flags & STATE_FINISHING:
             if telemetry is not None and other_addr is not None and not telemetry.slot_finished(2):
-                _wait_for_other_player_finish(other_addr, race_num, telemetry, race_start)
+                _wait_for_other_player_finish(other_addr, race_num, telemetry, race_start, raceinfo_addr)
             if SCAN_PLAYER_ITEM:
                 _print_player_item_summary(race_num, offset_history)
                 _print_item_packet_summary(race_num, item_packet_history)
                 _print_pointer_chase_summary(race_num, ptr_tracked)
-            if telemetry is not None:
-                telemetry.flush()
-                telemetry.drain()
             return cur[:3], "finished"
         if stage is not None and stage != 2:
             if telemetry is not None and other_addr is not None and not telemetry.slot_finished(2):
-                _wait_for_other_player_finish(other_addr, race_num, telemetry, race_start)
+                _wait_for_other_player_finish(other_addr, race_num, telemetry, race_start, raceinfo_addr)
             if SCAN_PLAYER_ITEM:
                 _print_player_item_summary(race_num, offset_history)
                 _print_item_packet_summary(race_num, item_packet_history)
                 _print_pointer_chase_summary(race_num, ptr_tracked)
-            if telemetry is not None:
-                telemetry.flush()
-                telemetry.drain()
             return cur[:3], "left_race_stage"
 
-        time.sleep(POLL_INTERVAL_S)
+        time.sleep(TRACK_POLL_S)
 
 
 def _print_player_item_summary(race_num: int, offset_history: dict) -> None:
@@ -1922,6 +1947,8 @@ def main() -> None:
                 )
 
         result, reason = track_until_race_ends(raceinfo_addr, player_addr, race_num, telemetry)
+        if telemetry is not None:
+            telemetry.finish_race(race_num)  # one POST with the whole race; last place gets its last position and no final time
         if result is None:
             print(f"[race {race_num}] lost it before getting a solid reading; resuming.\n", flush=True)
             continue

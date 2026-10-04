@@ -49,7 +49,8 @@ export async function maybeFinalizeImmersiveRace(
     return { finalized: false }; // still waiting on at least one player
   }
 
-  const circuitEvent = events.find((e): e is CircuitDetectedEvent => e.type === "circuit-detected");
+  // Latest wins: the tracker re-reads the course at GO and re-sends it if the early read differed.
+  const circuitEvent = [...events].reverse().find((e): e is CircuitDetectedEvent => e.type === "circuit-detected");
   if (!circuitEvent) {
     // Shouldn't be reachable -- the tracker always emits circuit-detected
     // before any position data -- but a race can't finalize with no
@@ -67,11 +68,11 @@ export async function maybeFinalizeImmersiveRace(
     adiLap1TimeMs: lapTimeMs(events, "adi", 1),
     adiLap2TimeMs: lapTimeMs(events, "adi", 2),
     adiLap3TimeMs: lapTimeMs(events, "adi", 3),
-    adiFinalTimeMs: adiFinish.finalTimeMs,
+    adiFinalTimeMs: adiFinish.finalTimeMs ?? null,
     renLap1TimeMs: lapTimeMs(events, "ren", 1),
     renLap2TimeMs: lapTimeMs(events, "ren", 2),
     renLap3TimeMs: lapTimeMs(events, "ren", 3),
-    renFinalTimeMs: renFinish.finalTimeMs,
+    renFinalTimeMs: renFinish.finalTimeMs ?? null,
   };
 
   const store = getStore();

@@ -24,6 +24,14 @@ Uses only the standard library (urllib) -- no new dependency for an
 already dependency-light tool, and this has to run on whatever bare
 Python the Dolphin-memory venv happens to have.
 
+DESIGN (deferred): nothing is streamed live. The tracker records the whole
+race in memory -- every position change, lap split, and finish -- and
+sends it as ONE batch when the race ends (finish_race). The only early
+POST is the circuit, so the page can show the track name while the race
+runs. A JSON copy of every race is also written to ../race_backups/ so a
+failed POST can be replayed:
+    python scripts/kartstats_bridge.py ../race_backups/<file>.json --api-url ... --token ...
+
 Every public method here is best-effort and never raises: a network
 hiccup (dev server not running, wrong token, wrong URL) must never be
 able to stall or crash the actual Dolphin-memory tracking loop this
@@ -32,6 +40,7 @@ ERROR_LOG_INTERVAL_S, not on every tick.
 """
 
 import json
+import os
 import queue
 import threading
 import time
@@ -58,24 +67,15 @@ COURSE_ID_TO_CIRCUIT_ID = {
     0x1E: "gba-bowser-castle-3", 0x1F: "gba-shy-guy-beach",
 }
 
-POST_TIMEOUT_S = 15.0  # sent from a background thread, so a slow serverless cold start can't stall tracking
+POST_TIMEOUT_S = 30.0  # one POST per race, from a background thread; generous so a cold start can't fail it
 ERROR_LOG_INTERVAL_S = 10.0
-FLUSH_INTERVAL_S = 0.0  # events are only queued when something CHANGED, so there is nothing to throttle; the sender thread merges bursts
-# Position-updates are event-driven: sent only when a player's position or
-# lap changes -- exactly when auto_track_race.py prints a line. Unchanged
-# ticks send nothing (per-tick POSTs backed the queue up and the page lagged).
+BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "race_backups")
 
 
 class TelemetryBridge:
-    """One instance per script run. Holds the season id / auth the whole
-    run uses, plus small per-race, per-slot state (last known lap, when
-    the current lap started, whether that slot's race-finished event has
-    already been sent) needed to turn raw polls into the right event
-    types. `slot` here is always the 1-indexed TelemetrySlot the KartStats
-    side expects (1 or 2) -- which raw Dolphin slot ends up 1 vs 2 doesn't
-    matter, since KartStats' own Player Assignment step is exactly where
-    that gets resolved to adi/ren (with a swap escape hatch for when it's
-    guessed backwards)."""
+    """One instance per script run. `slot` is always the 1-indexed
+    TelemetrySlot KartStats expects (1 or 2); which raw Dolphin slot ends up
+    1 vs 2 is resolved to adi/ren by KartStats' Player Assignment step."""
 
     def __init__(self, season_id: str, api_url: str, token: str):
         self.season_id = season_id
@@ -84,130 +84,126 @@ class TelemetryBridge:
         self._outbox = queue.Queue()
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
-        self._pending = []
-        self._last_flush = 0.0
         self._last_error_log = 0.0
+        self._reset_race_state()
+
+    def _reset_race_state(self):
         self._slot_state = {}
+        self._race_events = []  # everything for the current race -- sent once, by finish_race
+        self._circuit_event = None
+        self.circuit_id = None
 
     def start_race(self, race_number: int):
-        """Call once per race, before polling starts -- clears per-slot
-        lap/finish tracking left over from the previous race."""
-        self._slot_state = {}
+        """Call once per race, before polling starts."""
+        self._reset_race_state()
 
     def send_circuit_detected(self, race_number: int, circuit_id: str):
-        self._queue(
-            {"type": "circuit-detected", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": 0, "circuitId": circuit_id}
-        )
-        self.flush()
+        """Sent immediately and on its own, so the KartStats page can show
+        the track while the race is still running. Calling it again (e.g.
+        the course read changed at GO) replaces the earlier one -- the page
+        and the finalize step both use the LATEST circuit event."""
+        event = {"type": "circuit-detected", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": 0, "circuitId": circuit_id}
+        self.circuit_id = circuit_id
+        self._circuit_event = event
+        self._outbox.put([event])
 
     def poll_slot(self, race_number: int, ts_ms: int, slot: int, reading, finishing: bool):
-        """`reading` is (position, lap, maxlap, flags) from
-        auto_track_race.py's read_player(), or None if this slot couldn't
-        be read this tick (silently skipped, same as the main loop
-        already does for stale reads elsewhere). `finishing` is the
-        caller's own STATE_FINISHING check -- the MKW-specific flag
-        constants stay in auto_track_race.py, which already has them for
-        its own loop; this module just reacts to the resulting bool so it
-        doesn't need to duplicate (and risk drifting from) those
-        constants."""
+        """`reading` is (position, lap, maxlap, flags) from read_player(),
+        or None if unreadable this tick. Records position changes, lap
+        splits and the finish into memory; sends nothing. A lap that never
+        completes (e.g. last place when the race ends for everyone) never
+        produces a lap-complete, so its time is simply absent."""
         if reading is None:
             return
         pos, lap, _maxlap, _flags = reading
-        state = self._slot_state.setdefault(slot, {"lap": None, "lap_start_ms": 0, "finished": False})
+        state = self._slot_state.setdefault(
+            slot, {"lap": None, "lap_start_ms": 0, "finished": False, "pos": None, "completed": set(), "last_pos_sent": None}
+        )
+        state["pos"] = pos
 
-        last_sent = state.get("last_pos_sent")  # (pos, lap, ts_ms)
-        if last_sent is None or (pos, lap) != last_sent[:2]:
-            state["last_pos_sent"] = (pos, lap, ts_ms)
+        if state["last_pos_sent"] != (pos, lap):
+            state["last_pos_sent"] = (pos, lap)
             self._queue(
-                {
-                    "type": "position-update",
-                    "seasonId": self.season_id,
-                    "raceNumber": race_number,
-                    "tsMs": ts_ms,
-                    "slot": slot,
-                    "position": pos,
-                    "lap": lap,
-                }
+                {"type": "position-update", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": ts_ms, "slot": slot, "position": pos, "lap": lap}
             )
 
         if state["lap"] is not None and lap > state["lap"]:
-            self._queue(
-                {
-                    "type": "lap-complete",
-                    "seasonId": self.season_id,
-                    "raceNumber": race_number,
-                    "tsMs": ts_ms,
-                    "slot": slot,
-                    "lap": state["lap"],
-                    "lapTimeMs": ts_ms - state["lap_start_ms"],
-                }
-            )
-            state["lap_start_ms"] = ts_ms
+            done = state["lap"]  # the lap that just ended
+            if done >= 1:
+                # Lap 0 is the run-up to the start line (karts start behind
+                # it) -- lap 1's clock started at GO, so it is NOT reset
+                # when the counter ticks 0 -> 1.
+                self._complete_lap(race_number, ts_ms, slot, state, done)
+                state["lap_start_ms"] = ts_ms
         state["lap"] = lap
 
         if finishing and not state["finished"]:
             state["finished"] = True
+            if lap >= 3:
+                self._complete_lap(race_number, ts_ms, slot, state, 3)  # no-op if the 3 -> 4 tick already did it
             self._queue(
-                {
-                    "type": "race-finished",
-                    "seasonId": self.season_id,
-                    "raceNumber": race_number,
-                    "tsMs": ts_ms,
-                    "slot": slot,
-                    "finalPosition": pos,
-                    "finalTimeMs": ts_ms,
-                }
+                {"type": "race-finished", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": ts_ms, "slot": slot, "finalPosition": pos, "finalTimeMs": ts_ms}
             )
+
+    def _complete_lap(self, race_number, ts_ms, slot, state, lap):
+        if lap in state["completed"]:
+            return
+        state["completed"].add(lap)
+        self._queue(
+            {"type": "lap-complete", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": ts_ms, "slot": slot, "lap": lap, "lapTimeMs": ts_ms - state["lap_start_ms"]}
+        )
 
     def slot_finished(self, slot: int) -> bool:
         return self._slot_state.get(slot, {}).get("finished", False)
 
     def flush(self, force: bool = False):
-        """Hand the pending events to the background sender and return
-        immediately -- never blocks the Dolphin polling loop. Throttled to
-        one batch per FLUSH_INTERVAL_S unless forced (race end)."""
-        if not self._pending:
-            return
-        now = time.time()
-        if not force and now - self._last_flush < FLUSH_INTERVAL_S:
-            return
-        self._last_flush = now
-        events, self._pending = self._pending, []
-        self._outbox.put(events)
+        """Kept so existing call sites still work -- nothing is streamed any more."""
+        return
 
-    def drain(self, timeout_s: float = 20.0):
-        """Wait (bounded) for queued batches to finish sending, e.g. at the
-        end of a race so the final race-finished events aren't lost."""
-        self.flush(force=True)
+    def finish_race(self, race_number: int):
+        """Race is over for everyone: any slot that never crossed the line
+        (last place -- the race ends when everyone else finishes) is closed
+        out with its last known position and NO final time, then the whole
+        race is sent as one batch."""
+        for slot, state in self._slot_state.items():
+            if not state["finished"] and state["pos"] is not None:
+                state["finished"] = True
+                self._queue(
+                    {"type": "race-finished", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": 0, "slot": slot, "finalPosition": state["pos"], "finalTimeMs": None}
+                )
+        if not self._race_events:
+            return
+        events = ([self._circuit_event] if self._circuit_event else []) + self._race_events
+        path = self._backup(race_number, events)
+        self._outbox.put(events)
+        print(f"KartStats bridge: race {race_number} sent ({len(events)} events); backup at {path}", flush=True)
+        self.drain(40)
+        self._reset_race_state()
+
+    def drain(self, timeout_s: float = 40.0):
         deadline = time.time() + timeout_s
         while self._outbox.unfinished_tasks and time.time() < deadline:
             time.sleep(0.1)
 
+    def _backup(self, race_number, events):
+        try:
+            os.makedirs(BACKUP_DIR, exist_ok=True)
+            path = os.path.abspath(os.path.join(BACKUP_DIR, f"race_{self.season_id[:8]}_{race_number}_{int(time.time())}.json"))
+            with open(path, "w") as f:
+                json.dump({"events": events}, f)
+            return path
+        except Exception:
+            return "(backup failed)"
+
     def _worker_loop(self):
         while True:
             events = self._outbox.get()
-            taken = 1
-            # Merge anything already waiting (same race only -- the route
-            # requires one raceNumber per batch) so a slow server can't
-            # build an ever-growing backlog.
-            while True:
-                try:
-                    nxt = self._outbox.get_nowait()
-                except queue.Empty:
-                    break
-                taken += 1
-                if nxt and events and nxt[0].get("raceNumber") != events[0].get("raceNumber"):
-                    self._post(events)
-                    events = nxt
-                else:
-                    events = events + nxt
             try:
                 self._post(events)
             except Exception:
                 pass
             finally:
-                for _ in range(taken):
-                    self._outbox.task_done()
+                self._outbox.task_done()
 
     def _post(self, events):
         body = json.dumps({"events": events}).encode("utf-8")
@@ -221,18 +217,32 @@ class TelemetryBridge:
             urllib.request.urlopen(req, timeout=POST_TIMEOUT_S).read()
         except urllib.error.HTTPError as exc:
             self._log_error(f"HTTP {exc.code}: {exc.read()[:200]!r}")
-        except Exception as exc:  # deliberately broad -- see class docstring
+        except Exception as exc:  # deliberately broad -- see module docstring
             self._log_error(str(exc))
 
     def _log_error(self, detail: str):
         now = time.time()
         if now - self._last_error_log >= ERROR_LOG_INTERVAL_S:
-            print(
-                f"KartStats bridge: POST to {self.api_url} failed ({detail}) -- "
-                "will keep trying; Dolphin tracking itself is unaffected.",
-                flush=True,
-            )
+            print(f"KartStats bridge: POST to {self.api_url} failed ({detail}) -- tracking continues; the race was saved to race_backups/ and can be replayed.", flush=True)
             self._last_error_log = now
 
     def _queue(self, event: dict):
-        self._pending.append(event)
+        self._race_events.append(event)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Replay a saved race batch (race_backups/*.json) to KartStats.")
+    ap.add_argument("file")
+    ap.add_argument("--api-url", default=os.environ.get("KARTSTATS_API_URL"))
+    ap.add_argument("--token", default=os.environ.get("KARTSTATS_BRIDGE_TOKEN"))
+    a = ap.parse_args()
+    data = json.load(open(a.file))
+    req = urllib.request.Request(
+        a.api_url,
+        data=json.dumps(data).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {a.token}"},
+    )
+    print(urllib.request.urlopen(req, timeout=POST_TIMEOUT_S).read().decode())

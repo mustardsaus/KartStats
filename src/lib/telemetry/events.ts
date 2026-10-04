@@ -36,7 +36,7 @@ export type TelemetryEvent =
   | (TelemetryEventBase & { type: "position-update"; slot: TelemetrySlot; position: number; lap: number })
   | (TelemetryEventBase & { type: "lap-complete"; slot: TelemetrySlot; lap: number; lapTimeMs: number })
   | (TelemetryEventBase & { type: "item-received"; slot: TelemetrySlot; itemId: ItemId; lap: number })
-  | (TelemetryEventBase & { type: "race-finished"; slot: TelemetrySlot; finalPosition: number; finalTimeMs: number });
+  | (TelemetryEventBase & { type: "race-finished"; slot: TelemetrySlot; finalPosition: number; finalTimeMs: number | null }); // null = never crossed the line (race ended for everyone first), e.g. last place
 
 export interface TelemetryEventBatch {
   events: TelemetryEvent[];
@@ -47,7 +47,7 @@ export type StoredTelemetryEvent =
   | (TelemetryEventBase & { type: "position-update"; playerId: PlayerId; position: number; lap: number })
   | (TelemetryEventBase & { type: "lap-complete"; playerId: PlayerId; lap: number; lapTimeMs: number })
   | (TelemetryEventBase & { type: "item-received"; playerId: PlayerId; itemId: ItemId; lap: number })
-  | (TelemetryEventBase & { type: "race-finished"; playerId: PlayerId; finalPosition: number; finalTimeMs: number });
+  | (TelemetryEventBase & { type: "race-finished"; playerId: PlayerId; finalPosition: number; finalTimeMs: number | null }); // null = never crossed the line (race ended for everyone first), e.g. last place
 
 /** Drops any lap-0 split -- see module doc above. The single choke point for this rule. */
 export function dropLapZeroEvents(events: TelemetryEvent[]): TelemetryEvent[] {
