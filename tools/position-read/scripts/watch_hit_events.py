@@ -31,14 +31,24 @@ launch) are different enough to likely be tracked separately. This script
 can only show what's actually there; it can't promise the specific
 distinction you're hoping for.
 
+Self-recalled timestamps turned out too imprecise to match confidently
+against the log on the first real run -- "~135s" from memory, while
+actively driving, didn't land cleanly on any single candidate. So this
+version adds a live marker: tap Enter the INSTANT you get hit (no typing
+needed, hands barely leave the controller) and that exact moment gets
+logged. Report the order of what hit you afterward, same as before, and
+marker 1/2/3/... line up with that order precisely instead of guessing.
+
 Usage:
     python scripts/watch_hit_events.py
-Get into a race. Get hit by a few different things (note the order and
-what each one actually was). Ctrl+C when done, then report that sequence
-back so the log can be matched against it.
+Get into a race. The instant you get hit, tap Enter (then keep playing).
+Ctrl+C when done, then report the order/type of hits that correspond to
+each marker.
 """
 import os
+import queue
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -93,6 +103,37 @@ STATE_FLAG_NAMES = {
     atr.STATE_FINISHING: "FINISHING",
     atr.STATE_COMING_LAST_ANIM: "COMING_LAST_ANIM",
 }
+
+
+def start_enter_marker_thread(mark_queue: "queue.Queue") -> None:
+    """Runs a daemon thread that blocks on input() (a bare Enter press,
+    no typing required) and pushes a sentinel onto mark_queue each time.
+    Separate thread so the polling loop never blocks waiting for a
+    keypress that might not come for minutes."""
+
+    def _listen():
+        while True:
+            try:
+                input()
+            except EOFError:
+                return
+            mark_queue.put(True)
+
+    t = threading.Thread(target=_listen, daemon=True)
+    t.start()
+
+
+def drain_marks(mark_queue: "queue.Queue", elapsed: float, mark_count: int):
+    """Pure-ish helper: pulls every pending mark off the queue and returns
+    (new_mark_count, [log lines]) -- kept separate from the emit/print
+    side effect so the counting logic is testable without a real queue
+    full of real threading timing."""
+    lines = []
+    while not mark_queue.empty():
+        mark_queue.get()
+        mark_count += 1
+        lines.append(f"[{elapsed:6.1f}s] *** HIT MARKED (#{mark_count}) -- note what this one was ***")
+    return mark_count, lines
 
 
 def read_window(base: int, size: int):
@@ -163,9 +204,14 @@ def main() -> None:
         emit(f"Kart-state struct -> 0x{kart_state_addr:08X}  (watching 0x{KART_STATE_WINDOW_SIZE:X} bytes)")
         emit(
             "\nLogging every byte that changes in either window for the rest of this "
-            "race. Get hit by a few different things, note what each one actually was "
-            "(and the order), then Ctrl+C and report that sequence back.\n"
+            "race. The INSTANT you get hit, tap Enter in this terminal (no typing "
+            "needed) -- that marks the exact moment precisely. Report the order/type "
+            "of hits afterward. Ctrl+C when done.\n"
         )
+
+        mark_queue: "queue.Queue" = queue.Queue()
+        start_enter_marker_thread(mark_queue)
+        mark_count = 0
 
         t_start = time.time()
         prev_rip = read_window(rip_addr, RIP_WINDOW_SIZE)
@@ -178,6 +224,10 @@ def main() -> None:
                 break
 
             elapsed = time.time() - t_start
+
+            mark_count, mark_lines = drain_marks(mark_queue, elapsed, mark_count)
+            for line in mark_lines:
+                emit(line)
 
             cur_rip = read_window(rip_addr, RIP_WINDOW_SIZE)
             if cur_rip is None:
