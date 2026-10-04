@@ -1448,6 +1448,7 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
     ptr_tracked = {}  # source_offset -> {"target", "window", "history", "retargets"}
 
     other_addr = None
+    other_last = None
     if telemetry is not None:
         telemetry.start_race(race_num)
         other_addr = _find_other_player_addr(raceinfo_addr, player_addr)
@@ -1493,6 +1494,9 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
             if other_addr is not None:
                 other_cur = read_player(other_addr)
                 if other_cur is not None:
+                    if other_last is not None and other_cur[0] != other_last[0]:
+                        print(f"[race {race_num}] player 2 -- position {other_cur[0]}  (was {other_last[0]}, lap {other_cur[1]}/{STANDARD_LAP_COUNT})", flush=True)
+                    other_last = other_cur
                     telemetry.poll_slot(race_num, ts_ms, 2, other_cur, bool(other_cur[3] & STATE_FINISHING))
             telemetry.flush()
 

@@ -60,6 +60,10 @@ COURSE_ID_TO_CIRCUIT_ID = {
 
 POST_TIMEOUT_S = 15.0  # sent from a background thread, so a slow serverless cold start can't stall tracking
 ERROR_LOG_INTERVAL_S = 10.0
+FLUSH_INTERVAL_S = 0.0  # events are only queued when something CHANGED, so there is nothing to throttle; the sender thread merges bursts
+# Position-updates are event-driven: sent only when a player's position or
+# lap changes -- exactly when auto_track_race.py prints a line. Unchanged
+# ticks send nothing (per-tick POSTs backed the queue up and the page lagged).
 
 
 class TelemetryBridge:
@@ -81,6 +85,7 @@ class TelemetryBridge:
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
         self._pending = []
+        self._last_flush = 0.0
         self._last_error_log = 0.0
         self._slot_state = {}
 
@@ -110,17 +115,20 @@ class TelemetryBridge:
         pos, lap, _maxlap, _flags = reading
         state = self._slot_state.setdefault(slot, {"lap": None, "lap_start_ms": 0, "finished": False})
 
-        self._queue(
-            {
-                "type": "position-update",
-                "seasonId": self.season_id,
-                "raceNumber": race_number,
-                "tsMs": ts_ms,
-                "slot": slot,
-                "position": pos,
-                "lap": lap,
-            }
-        )
+        last_sent = state.get("last_pos_sent")  # (pos, lap, ts_ms)
+        if last_sent is None or (pos, lap) != last_sent[:2]:
+            state["last_pos_sent"] = (pos, lap, ts_ms)
+            self._queue(
+                {
+                    "type": "position-update",
+                    "seasonId": self.season_id,
+                    "raceNumber": race_number,
+                    "tsMs": ts_ms,
+                    "slot": slot,
+                    "position": pos,
+                    "lap": lap,
+                }
+            )
 
         if state["lap"] is not None and lap > state["lap"]:
             self._queue(
@@ -154,17 +162,23 @@ class TelemetryBridge:
     def slot_finished(self, slot: int) -> bool:
         return self._slot_state.get(slot, {}).get("finished", False)
 
-    def flush(self):
+    def flush(self, force: bool = False):
         """Hand the pending events to the background sender and return
-        immediately -- never blocks the Dolphin polling loop."""
+        immediately -- never blocks the Dolphin polling loop. Throttled to
+        one batch per FLUSH_INTERVAL_S unless forced (race end)."""
         if not self._pending:
             return
+        now = time.time()
+        if not force and now - self._last_flush < FLUSH_INTERVAL_S:
+            return
+        self._last_flush = now
         events, self._pending = self._pending, []
         self._outbox.put(events)
 
     def drain(self, timeout_s: float = 20.0):
         """Wait (bounded) for queued batches to finish sending, e.g. at the
         end of a race so the final race-finished events aren't lost."""
+        self.flush(force=True)
         deadline = time.time() + timeout_s
         while self._outbox.unfinished_tasks and time.time() < deadline:
             time.sleep(0.1)
@@ -172,12 +186,28 @@ class TelemetryBridge:
     def _worker_loop(self):
         while True:
             events = self._outbox.get()
+            taken = 1
+            # Merge anything already waiting (same race only -- the route
+            # requires one raceNumber per batch) so a slow server can't
+            # build an ever-growing backlog.
+            while True:
+                try:
+                    nxt = self._outbox.get_nowait()
+                except queue.Empty:
+                    break
+                taken += 1
+                if nxt and events and nxt[0].get("raceNumber") != events[0].get("raceNumber"):
+                    self._post(events)
+                    events = nxt
+                else:
+                    events = events + nxt
             try:
                 self._post(events)
             except Exception:
                 pass
             finally:
-                self._outbox.task_done()
+                for _ in range(taken):
+                    self._outbox.task_done()
 
     def _post(self, events):
         body = json.dumps({"events": events}).encode("utf-8")
