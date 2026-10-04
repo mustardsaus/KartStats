@@ -89,7 +89,8 @@ export function ImmersiveModeClient({
   const raceStats = useMemo(() => buildRaceStats(races, circuitsById, pointsMapping), [races, circuitsById, pointsMapping]);
   const { adiTotal, renTotal } = useMemo(() => calculateSeasonTotals(raceStats), [raceStats]);
 
-  const circuitEvent = liveEvents.find((e) => e.type === "circuit-detected");
+  // Latest, not first: if the tracker restarted mid-race there can be several circuit-detected events and the newest one is the truth.
+  const circuitEvent = [...liveEvents].reverse().find((e) => e.type === "circuit-detected");
   const currentCircuit =
     circuitEvent && circuitEvent.type === "circuit-detected" ? circuitsById.get(circuitEvent.circuitId) ?? null : null;
 
