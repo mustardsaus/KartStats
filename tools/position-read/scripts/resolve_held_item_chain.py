@@ -31,10 +31,21 @@ before anything gets wired into the real tracker -- run it, confirm the
 value matches what you're holding, then start a FRESH race and confirm it
 still tracks correctly without touching this script again.
 
+First real run confirmed the chain tracks correctly through a whole race
+(8 straight pickup/use cycles, every item name matching what was actually
+picked up: Bullet Bill, Triple Red Shell, Triple Mushroom, Golden
+Mushroom, Triple Banana, Fake Item Box). The chain also correctly reports
+itself as broken between races (menu / results screen), which the first
+version treated as a fatal error and exited on -- this version instead
+waits through that gap and picks back up automatically once the chain
+resolves again, so it survives across races instead of needing a manual
+restart each time.
+
 Usage:
     python scripts/resolve_held_item_chain.py
 Get into a race and watch the value update as you pick up / use items.
-Ctrl+C to stop.
+It'll keep running through the post-race menu and into your next race
+with no restart needed. Ctrl+C to stop.
 """
 import os
 import sys
@@ -91,6 +102,10 @@ def describe_item_value(v):
     return atr.item_name(v)
 
 
+def chain_is_live(chain) -> bool:
+    return chain["held_item_addr"] is not None
+
+
 def main() -> None:
     lines = [f"\n=== resolve-held-item-chain run at {time.strftime('%Y-%m-%d %H:%M:%S')} ==="]
 
@@ -100,50 +115,49 @@ def main() -> None:
 
     try:
         atr.hook_with_retry()
-
-        chain = resolve_chain()
-        if chain["held_item_addr"] is None:
-            emit(
-                f"Chain didn't resolve: global slot 0x{GLOBAL_PTR_SLOT:08X} -> "
-                f"base={chain['base']!r}, array_ptr={chain['array_ptr']!r}. "
-                "Is a game actually loaded right now?"
-            )
-            return
-
-        emit(f"Global slot 0x{GLOBAL_PTR_SLOT:08X} -> base 0x{chain['base']:08X}")
-        emit(f"base + 0x{ARRAY_PTR_OFFSET:02X} -> array/player ptr 0x{chain['array_ptr']:08X}")
-        emit(f"held-item address -> 0x{chain['held_item_addr']:08X}")
-        emit(f"\nCurrent value: {chain['item_value']} ({describe_item_value(chain['item_value'])})")
         emit(
-            "\nWatching this address. Pick up / use items -- and once you've "
-            "seen it track correctly, start a FRESH race and confirm it keeps "
-            "working without restarting this script. Ctrl+C to stop.\n"
+            f"Chain: global slot 0x{GLOBAL_PTR_SLOT:08X} -> +0x{ARRAY_PTR_OFFSET:02X} "
+            f"array/player ptr -> +0x{HELD_ITEM_OFFSET:02X} held item.\n"
+            "Running continuously -- works through the pre-race menu, the race "
+            "itself, the results screen, and into your next race with no "
+            "restart needed. Ctrl+C to stop.\n"
         )
 
-        prev_addr = chain["held_item_addr"]
-        prev_value = chain["item_value"]
+        watching = False
+        prev_addr = None
+        prev_value = None
         while True:
-            time.sleep(POLL_INTERVAL_S)
             if not dme.is_hooked():
                 emit("Lost hook to Dolphin. Stopping.")
                 break
 
             chain = resolve_chain()
-            if chain["held_item_addr"] is None:
-                emit("Chain broke (game likely unloaded / menu). Stopping.")
-                break
+            live = chain_is_live(chain)
 
-            if chain["held_item_addr"] != prev_addr:
-                emit(
-                    f"[race change] held-item address moved: 0x{prev_addr:08X} -> "
-                    f"0x{chain['held_item_addr']:08X} (this is expected if you started "
-                    "a new race -- the CHAIN re-resolved it automatically)"
-                )
+            if live and not watching:
+                emit(f"\nRace active -- held-item address -> 0x{chain['held_item_addr']:08X}")
+                emit(f"Current value: {chain['item_value']} ({describe_item_value(chain['item_value'])})")
+                watching = True
                 prev_addr = chain["held_item_addr"]
-
-            if chain["item_value"] != prev_value:
-                emit(f"  -> {describe_item_value(chain['item_value'])} (value {chain['item_value']})")
                 prev_value = chain["item_value"]
+            elif not live and watching:
+                emit("\nLeft the race (menu / results screen) -- waiting for the next race to start...")
+                watching = False
+                prev_addr = None
+                prev_value = None
+            elif live and watching:
+                if chain["held_item_addr"] != prev_addr:
+                    emit(
+                        f"[address changed] 0x{prev_addr:08X} -> 0x{chain['held_item_addr']:08X} "
+                        "(re-resolved via the chain, not re-scanned)"
+                    )
+                    prev_addr = chain["held_item_addr"]
+                if chain["item_value"] != prev_value:
+                    emit(f"  -> {describe_item_value(chain['item_value'])} (value {chain['item_value']})")
+                    prev_value = chain["item_value"]
+            # not live and not watching: still between races, nothing to report
+
+            time.sleep(POLL_INTERVAL_S)
     except KeyboardInterrupt:
         emit("\nStopped.")
     finally:
