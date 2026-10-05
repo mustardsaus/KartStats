@@ -1,20 +1,30 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import type { Circuit, PointsMapping, RawRace, RawSeason } from "@/lib/types";
+import type { Circuit, PlayerId, PointsMapping, RawRace, RawSeason } from "@/lib/types";
 import { RACES_PER_SEASON } from "@/lib/types";
 import type { StoredTelemetryEvent } from "@/lib/telemetry/events";
 import { getImmersiveStateAction, abandonImmersiveSeasonAction, endImmersiveSeasonEarlyAction } from "@/app/war-mode/immersive-actions";
 import { useImmersiveRealtime } from "@/lib/hooks/useImmersiveRealtime";
 import { buildRaceStats, calculateCircuitStats, calculateSeasonTotals, buildCircuitRecords, getCircuitRecord } from "@/lib/stats";
 import { CircuitPreviewPanel } from "../CircuitPreviewPanel";
-import { LiveLeaderboard } from "../LiveLeaderboard";
 import { SeasonCompletionScreen } from "../SeasonCompletionScreen";
+import { BattleScreen } from "../battle/BattleScreen";
+import { CharacterIcon } from "../battle/CharacterIcon";
+import { VehicleIcon } from "../battle/VehicleIcon";
+import { CHARACTERS_BY_ID } from "@/lib/data/characters";
+import { VEHICLES_BY_ID } from "@/lib/data/karts";
+import { PLAYERS } from "@/lib/data/points-mapping";
 import { RaceResultPanel } from "./RaceResultPanel";
+import { cn } from "@/lib/utils";
 import { Loader2, Radio, Copy, Check } from "lucide-react";
 
+/** One player's season-long loadout, resolved from either the locked-in season fields or a live detection event. */
+interface ResolvedLoadout {
+  characterId: string;
+  kartId: string;
+}
 
-/** Most recent position-update event for one player — events arrive in order, so the last match IS the latest. */
 interface Props {
   initialSeason: RawSeason;
   initialRaces: RawRace[];
@@ -40,6 +50,11 @@ interface Props {
  * instant a race finalizes, and keeps showing it until the Dolphin
  * tracker's first event for the NEXT race arrives — "loads once the
  * tracker shifts to the next one," nothing incremental.
+ *
+ * Shares the exact same full-bleed track-photo backdrop + persistent
+ * leaderboard component Battle Mode's live screen uses (BattleScreen) --
+ * this is "pull up the background image for the detected track, like
+ * Manual does" applied here too, not a separate implementation.
  */
 export function ImmersiveModeClient({
   initialSeason,
@@ -88,6 +103,31 @@ export function ImmersiveModeClient({
   // previous one's result. races.length === 0 means there's no "previous
   // race" at all (first race of the season still in progress).
   const justFinishedRace = liveEvents.length === 0 && races.length > 0 ? races[races.length - 1] : null;
+
+  // The track photo behind everything: the one just detected for the
+  // race in progress, or (once it's over, while the result panel is
+  // showing) the one the just-finished race was run on. Falls back to
+  // the generic war-mode backdrop inside BattleScreen when neither is
+  // known yet (e.g. still waiting on the very first circuit-detected event).
+  const backdropCircuit = currentCircuit ?? (justFinishedRace ? circuitsById.get(justFinishedRace.circuitId) ?? undefined : undefined);
+
+  // Each player's season-long loadout: prefer the locked-in season
+  // columns (set once finalize.ts sees race 1 complete, from race 2
+  // onward this is always available immediately) and fall back to
+  // scanning the live events for race 1 itself, before that lock-in has
+  // happened yet -- same "detect once, never re-detect" rule the bridge
+  // and finalize.ts already apply, just read from whichever source has
+  // it right now.
+  const adiLoadout = useMemo<ResolvedLoadout | null>(() => resolveLoadout(season.adiCharacter, season.adiKart, liveEvents, "adi"), [
+    season.adiCharacter,
+    season.adiKart,
+    liveEvents,
+  ]);
+  const renLoadout = useMemo<ResolvedLoadout | null>(() => resolveLoadout(season.renCharacter, season.renKart, liveEvents, "ren"), [
+    season.renCharacter,
+    season.renKart,
+    liveEvents,
+  ]);
 
   const circuitStat = useMemo(() => {
     if (!currentCircuit) return null;
@@ -158,18 +198,15 @@ export function ImmersiveModeClient({
   };
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-10">
-      <div className="flex items-center justify-between gap-4 mb-6">
-        <div>
-          <p className="font-hud text-xs font-bold tracking-[0.25em] text-danger uppercase flex items-center gap-1.5">
-            <Radio className="h-3 w-3 animate-pulse" /> Immersive &mdash; Season {season.seasonNumber}
-          </p>
-          <h1 className="font-display text-2xl text-text">
-            Race {races.length + 1} of {RACES_PER_SEASON}
-          </h1>
-          <SeasonIdChip seasonId={season.id} />
-        </div>
-        <LiveLeaderboard adiPoints={adiTotal} renPoints={renTotal} />
+    <BattleScreen circuit={backdropCircuit} adiPoints={adiTotal} renPoints={renTotal}>
+      <div className="text-center">
+        <p className="font-hud text-xs font-bold tracking-[0.25em] text-danger uppercase flex items-center justify-center gap-1.5">
+          <Radio className="h-3 w-3 animate-pulse" /> Immersive &mdash; Season {season.seasonNumber}
+        </p>
+        <h1 className="font-display text-2xl text-paper drop-shadow-lg">
+          Race {races.length + 1} of {RACES_PER_SEASON}
+        </h1>
+        <SeasonIdChip seasonId={season.id} />
       </div>
 
       {justFinishedRace ? (
@@ -181,23 +218,24 @@ export function ImmersiveModeClient({
       ) : currentCircuit ? (
         <div className="space-y-5">
           <CircuitPreviewPanel circuit={currentCircuit} stat={circuitStat} record={circuitRecord} raceNumber={races.length + 1} />
-          <p className="text-center text-sm text-text-dim flex items-center justify-center gap-2">
+          <LoadoutStrip adiLoadout={adiLoadout} renLoadout={renLoadout} />
+          <p className="text-center text-sm text-paper/75 flex items-center justify-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin text-danger" /> Race in progress &mdash; results, lap splits and the position graph appear when it ends.
           </p>
         </div>
       ) : (
         <div className="text-center py-20">
           <Loader2 className="h-8 w-8 text-danger mx-auto mb-4 animate-spin" />
-          <p className="text-text-dim text-sm">Waiting for Dolphin to detect the next race&hellip;</p>
+          <p className="text-paper/75 text-sm">Waiting for Dolphin to detect the next race&hellip;</p>
         </div>
       )}
 
-      <div className="mt-8 pt-6 border-t border-border text-center">
+      <div className="pt-6 border-t border-paper/15 text-center">
         {races.length === 0 ? (
           <button
             onClick={handleAbandon}
             disabled={abandonPending}
-            className="text-xs text-danger/80 hover:text-danger underline underline-offset-2 disabled:opacity-60"
+            className="text-xs text-paper/50 hover:text-danger underline underline-offset-2 disabled:opacity-60 transition-colors"
           >
             {abandonPending ? "Cancelling…" : "Started this by mistake? Cancel season"}
           </button>
@@ -205,13 +243,78 @@ export function ImmersiveModeClient({
           <button
             onClick={handleEndEarly}
             disabled={abandonPending}
-            className="text-xs text-danger/80 hover:text-danger underline underline-offset-2 disabled:opacity-60"
+            className="text-xs text-paper/50 hover:text-danger underline underline-offset-2 disabled:opacity-60 transition-colors"
           >
             {abandonPending ? "Ending…" : `End season now (${races.length} race${races.length === 1 ? "" : "s"} recorded)`}
           </button>
         )}
         {abandonError && <p className="text-xs text-danger mt-2">{abandonError}</p>}
       </div>
+    </BattleScreen>
+  );
+}
+
+/**
+ * Resolves one player's season loadout: the locked-in season columns win
+ * once they exist (every race from the 2nd onward, set by finalize.ts the
+ * instant race 1 finalizes), otherwise falls back to that player's most
+ * recent "loadout-detected" live event -- the only way to show anything
+ * during race 1 itself, before there's a finalized race to lock it in from.
+ */
+function resolveLoadout(
+  lockedCharacter: string | null | undefined,
+  lockedKart: string | null | undefined,
+  liveEvents: StoredTelemetryEvent[],
+  playerId: PlayerId
+): ResolvedLoadout | null {
+  if (lockedCharacter && lockedKart) return { characterId: lockedCharacter, kartId: lockedKart };
+  const event = [...liveEvents].reverse().find((e) => e.type === "loadout-detected" && e.playerId === playerId);
+  if (event && event.type === "loadout-detected") return { characterId: event.characterId, kartId: event.kartId };
+  return null;
+}
+
+/**
+ * Both players' detected character + kart, shown directly below the
+ * track name while a race is in progress -- real portrait/vehicle art via
+ * CharacterIcon/VehicleIcon, not just ids. Renders a "Detecting…" card in
+ * place of either side that hasn't come in yet (a brief window early in
+ * race 1, before the tracker's first loadout-detected event for that
+ * player arrives) rather than hiding the whole strip.
+ */
+function LoadoutStrip({ adiLoadout, renLoadout }: { adiLoadout: ResolvedLoadout | null; renLoadout: ResolvedLoadout | null }) {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <LoadoutCard playerId="adi" loadout={adiLoadout} />
+      <LoadoutCard playerId="ren" loadout={renLoadout} />
+    </div>
+  );
+}
+
+function LoadoutCard({ playerId, loadout }: { playerId: PlayerId; loadout: ResolvedLoadout | null }) {
+  return (
+    <div className="rounded-xl bg-void/55 backdrop-blur-sm border border-paper/10 px-4 py-3 text-center">
+      <p
+        className={cn(
+          "font-hud text-[11px] font-bold tracking-[0.2em] uppercase mb-1.5",
+          playerId === "adi" ? "text-adi-vivid" : "text-ren-vivid"
+        )}
+      >
+        {PLAYERS[playerId].name}
+      </p>
+      {loadout ? (
+        <>
+          <div className="flex items-center justify-center -space-x-1.5 mb-1.5">
+            <CharacterIcon characterId={loadout.characterId} accent={playerId} size="md" className="ring-2 ring-void/40" />
+            <VehicleIcon vehicleId={loadout.kartId} accent={playerId} size="md" className="ring-2 ring-void/40" />
+          </div>
+          <p className="text-xs text-paper/75">
+            {CHARACTERS_BY_ID.get(loadout.characterId)?.name ?? loadout.characterId} &middot;{" "}
+            {VEHICLES_BY_ID.get(loadout.kartId)?.name ?? loadout.kartId}
+          </p>
+        </>
+      ) : (
+        <p className="text-xs text-paper/50 py-3.5">Detecting&hellip;</p>
+      )}
     </div>
   );
 }
@@ -238,7 +341,7 @@ function SeasonIdChip({ seasonId }: { seasonId: string }) {
           .catch(() => {});
       }}
       title="Copy for the Dolphin tracker's --season-id flag"
-      className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-text-faint hover:text-text-dim transition-colors"
+      className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-paper/50 hover:text-paper/80 transition-colors"
     >
       {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
       <span className="font-mono truncate max-w-[220px]">{seasonId}</span>

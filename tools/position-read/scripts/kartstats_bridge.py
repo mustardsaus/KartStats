@@ -146,6 +146,7 @@ class TelemetryBridge:
         self._race_events = []  # everything for the current race -- sent once, by finish_race
         self._circuit_event = None
         self.circuit_id = None
+        self._loadout_events = []  # sent immediately (see send_loadout_detected), kept here only for the backup file
 
     def start_race(self, race_number: int):
         """Call once per race, before polling starts."""
@@ -162,27 +163,30 @@ class TelemetryBridge:
         self._outbox.put([event])
 
     def send_loadout_detected(self, race_number: int, slot: int, character_id: int, vehicle_id: int):
-        """Queued (not sent immediately) -- goes out with the rest of this
-        race's batch at finish_race(). KartStats only ever USES the first
-        one it gets for a season (see lib/telemetry/finalize.ts), so
-        sending it every race is harmless, not wasteful logic to special-
-        case out here. An id this bridge doesn't have a slug for (a Mii)
-        is skipped entirely -- never guessed."""
+        """Sent immediately and on its own (same reasoning as
+        send_circuit_detected) -- not queued into the end-of-race batch,
+        so the KartStats page can show who's playing as what WHILE the
+        race is still running, not only after it ends. KartStats only
+        ever USES the first race's reading for the whole season (see
+        lib/telemetry/finalize.ts), so sending it every race is harmless,
+        not wasteful logic to special-case out here. An id this bridge
+        doesn't have a slug for (a Mii) is skipped entirely -- never
+        guessed."""
         char_slug = CHARACTER_ID_TO_SLUG.get(character_id)
         kart_slug = VEHICLE_ID_TO_SLUG.get(vehicle_id)
         if not char_slug or not kart_slug:
             return
-        self._queue(
-            {
-                "type": "loadout-detected",
-                "seasonId": self.season_id,
-                "raceNumber": race_number,
-                "tsMs": 0,
-                "slot": slot,
-                "characterId": char_slug,
-                "kartId": kart_slug,
-            }
-        )
+        event = {
+            "type": "loadout-detected",
+            "seasonId": self.season_id,
+            "raceNumber": race_number,
+            "tsMs": 0,
+            "slot": slot,
+            "characterId": char_slug,
+            "kartId": kart_slug,
+        }
+        self._loadout_events.append(event)
+        self._outbox.put([event])
 
     def poll_slot(self, race_number: int, ts_ms: int, slot: int, reading, finishing: bool):
         """`reading` is (position, lap, maxlap, flags) from read_player(),
@@ -250,7 +254,7 @@ class TelemetryBridge:
                 )
         if not self._race_events:
             return
-        events = ([self._circuit_event] if self._circuit_event else []) + self._race_events
+        events = ([self._circuit_event] if self._circuit_event else []) + self._loadout_events + self._race_events
         path = self._backup(race_number, events)
         self._outbox.put(events)
         print(f"KartStats bridge: race {race_number} sent ({len(events)} events); backup at {path}", flush=True)
