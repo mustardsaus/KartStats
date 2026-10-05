@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useTransition } from "react"
 import type { Circuit, PointsMapping, RawRace, RawSeason } from "@/lib/types";
 import { RACES_PER_SEASON } from "@/lib/types";
 import type { StoredTelemetryEvent } from "@/lib/telemetry/events";
-import { getImmersiveStateAction, abandonImmersiveSeasonAction } from "@/app/war-mode/immersive-actions";
+import { getImmersiveStateAction, abandonImmersiveSeasonAction, endImmersiveSeasonEarlyAction } from "@/app/war-mode/immersive-actions";
 import { useImmersiveRealtime } from "@/lib/hooks/useImmersiveRealtime";
 import { buildRaceStats, calculateCircuitStats, calculateSeasonTotals, buildCircuitRecords, getCircuitRecord } from "@/lib/stats";
 import { CircuitPreviewPanel } from "../CircuitPreviewPanel";
@@ -144,6 +144,19 @@ export function ImmersiveModeClient({
     });
   };
 
+  // Same transition/error state as Cancel above -- the two buttons are
+  // mutually exclusive (races.length === 0 vs > 0), never shown together.
+  const handleEndEarly = () => {
+    setAbandonError(null);
+    startAbandon(async () => {
+      const result = await endImmersiveSeasonEarlyAction(season.id);
+      if ("error" in result && result.error) {
+        setAbandonError(result.error);
+      }
+      // On success, revalidatePath swaps this whole component out for the season-completion screen.
+    });
+  };
+
   return (
     <div className="mx-auto max-w-2xl px-4 py-10">
       <div className="flex items-center justify-between gap-4 mb-6">
@@ -179,8 +192,8 @@ export function ImmersiveModeClient({
         </div>
       )}
 
-      {races.length === 0 && (
-        <div className="mt-8 pt-6 border-t border-border text-center">
+      <div className="mt-8 pt-6 border-t border-border text-center">
+        {races.length === 0 ? (
           <button
             onClick={handleAbandon}
             disabled={abandonPending}
@@ -188,19 +201,28 @@ export function ImmersiveModeClient({
           >
             {abandonPending ? "Cancelling…" : "Started this by mistake? Cancel season"}
           </button>
-          {abandonError && <p className="text-xs text-danger mt-2">{abandonError}</p>}
-        </div>
-      )}
+        ) : (
+          <button
+            onClick={handleEndEarly}
+            disabled={abandonPending}
+            className="text-xs text-danger/80 hover:text-danger underline underline-offset-2 disabled:opacity-60"
+          >
+            {abandonPending ? "Ending…" : `End season now (${races.length} race${races.length === 1 ? "" : "s"} recorded)`}
+          </button>
+        )}
+        {abandonError && <p className="text-xs text-danger mt-2">{abandonError}</p>}
+      </div>
     </div>
   );
 }
 
 /**
- * The Dolphin tracker's --season-id flag needs this exact id -- there's
- * no other way to tell the Python bridge which season to post into, so
- * it has to be copyable from right here. Click-to-copy rather than a
- * plain text blob so it's usable on the TV-facing Same Device screen
- * too, not just when inspecting via devtools.
+ * Mostly a debugging aid now that the tracker auto-discovers the waiting
+ * season on its own (see kartstats_bridge.discover_season_id) -- useful
+ * for confirming which season is actually live, or for the --season-id
+ * override flag on the rare occasion discovery picks the wrong one.
+ * Click-to-copy rather than a plain text blob so it's usable on the
+ * TV-facing Same Device screen too, not just when inspecting via devtools.
  */
 function SeasonIdChip({ seasonId }: { seasonId: string }) {
   const [copied, setCopied] = useState(false);

@@ -5,6 +5,7 @@ import { getCharacterWeightClass } from "@/lib/data/characters";
 import { isVehicleAvailableToWeightClass } from "@/lib/data/karts";
 import type { DisplayConfig, TransmissionMode } from "@/lib/types";
 import { revalidatePath } from "next/cache";
+import { computeAndCompleteSeason } from "./actions";
 
 /**
  * Immersive War Mode's server-side orchestration — mirrors the shape of
@@ -107,9 +108,29 @@ export async function abandonImmersiveSeasonAction(seasonId: string) {
   const store = getStore();
   const races = (await store.getRacesBySeasonId()).get(seasonId) ?? [];
   if (races.length > 0) {
-    return { error: "This season already has races recorded — it can't be abandoned." };
+    return { error: 'This season already has races recorded — use "End season" instead to close it out.' };
   }
   await store.deleteEmptySeason(seasonId);
   revalidatePath("/war-mode");
   return { abandoned: true };
+}
+
+/**
+ * Ends an Immersive season before it reaches 32 races -- the Immersive
+ * equivalent of endBattleEarlyAction (battle-actions.ts): computes the
+ * real winner/points from whatever races actually got recorded (same
+ * computeAndCompleteSeason every "a season is now done" path uses) rather
+ * than discarding anything. abandonImmersiveSeasonAction above stays the
+ * "cancel a mistake, nothing worth keeping" path for a season with zero
+ * races; this is for a season already underway that needs to stop.
+ */
+export async function endImmersiveSeasonEarlyAction(seasonId: string) {
+  const store = getStore();
+  const races = (await store.getRacesBySeasonId()).get(seasonId) ?? [];
+  if (races.length === 0) {
+    return { error: 'No races recorded yet — use "Cancel season" instead to discard it entirely.' };
+  }
+  await computeAndCompleteSeason(seasonId);
+  revalidatePath("/war-mode");
+  return { ended: true };
 }
