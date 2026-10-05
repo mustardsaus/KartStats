@@ -131,6 +131,12 @@ export const localStore: DataStore = {
       renLap2TimeMs: input.renLap2TimeMs ?? null,
       renLap3TimeMs: input.renLap3TimeMs ?? null,
       renFinalTimeMs: input.renFinalTimeMs ?? null,
+      // Immersive only -- the season's auto-detected loadout, copied onto
+      // every race (see lib/telemetry/finalize.ts).
+      adiCharacter: input.adiCharacter ?? null,
+      adiKart: input.adiKart ?? null,
+      renCharacter: input.renCharacter ?? null,
+      renKart: input.renKart ?? null,
     };
     state.racesBySeasonId.set(seasonId, [...existing, race]);
     return race;

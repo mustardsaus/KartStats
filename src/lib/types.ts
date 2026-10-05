@@ -318,6 +318,16 @@ export interface RaceInput {
   renLap2TimeMs?: number | null;
   renLap3TimeMs?: number | null;
   renFinalTimeMs?: number | null;
+  /**
+   * Immersive only -- the season's locked-in loadout (detected once from
+   * race 1, see lib/telemetry/finalize.ts), copied onto every race as it
+   * finalizes. No transmission field -- Immersive doesn't read that out
+   * of memory, unlike Battle Mode's manually-picked Kart Kontrol loadout.
+   */
+  adiCharacter?: string | null;
+  adiKart?: string | null;
+  renCharacter?: string | null;
+  renKart?: string | null;
 }
 
 // ============================================================================

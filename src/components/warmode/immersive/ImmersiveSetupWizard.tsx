@@ -1,54 +1,32 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { DisplayConfig, TransmissionMode } from "@/lib/types";
-import {
-  startImmersiveSeasonAction,
-  setImmersiveSlotsAction,
-  setImmersiveLoadoutAction,
-} from "@/app/war-mode/immersive-actions";
-import { CHARACTERS_BY_ID, getCharacterWeightClass } from "@/lib/data/characters";
-import { VEHICLES_BY_ID } from "@/lib/data/karts";
+import type { DisplayConfig } from "@/lib/types";
+import { startImmersiveSeasonAction, setImmersiveSlotsAction } from "@/app/war-mode/immersive-actions";
 import { PLAYERS } from "@/lib/data/points-mapping";
-import { CharacterPicker } from "../battle/CharacterPicker";
-import { KartPicker } from "../battle/KartPicker";
-import { TransmissionPicker } from "../battle/TransmissionPicker";
 import { tapPulse } from "@/lib/animation";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, Loader2, Monitor, Smartphone } from "lucide-react";
 
-type Step =
-  | "count"
-  | "display"
-  | "assign"
-  | "adi-character"
-  | "adi-kart"
-  | "adi-transmission"
-  | "ren-character"
-  | "ren-kart"
-  | "ren-transmission"
-  | "submitting";
-
-interface Loadout {
-  character: string | null;
-  kart: string | null;
-  transmission: TransmissionMode | null;
-}
-
-const EMPTY_LOADOUT: Loadout = { character: null, kart: null, transmission: null };
+type Step = "count" | "display" | "assign" | "submitting";
 
 /**
- * The one-time Immersive setup flow, run once by whoever's setting up
- * the race: player count (locked to 2 — see the spec's "for now we only
- * built it for 2 players") → display config (one screen, or a second
- * device spectating too) → player assignment (which raw Dolphin slot is
- * Adi vs Ren, with a one-tap swap — the escape hatch for when the
- * tracker's slot 1/2 doesn't match who's actually sitting where) → each
- * player's season-long character/kart/transmission, reusing the exact
- * same CharacterPicker/KartPicker/TransmissionPicker Kart Kontrol already
- * built (just fixed for the whole season here instead of per-round).
+ * The one-time Immersive setup flow: player count (locked to 2 -- see the
+ * spec's "for now we only built it for 2 players") -> display config (one
+ * screen, or a second device spectating too) -> "are you Player 1 or
+ * Player 2?" (which raw Dolphin slot is Adi vs Ren -- the tracker's own
+ * slot order isn't guaranteed to match who's actually sitting where, so
+ * this is asked directly rather than guessed).
  *
- * `onComplete` is called once the season actually exists server-side —
+ * No loadout step any more -- character/kart used to be picked here for
+ * the whole season, but the Dolphin tracker now reads them itself from
+ * the first race and the server locks them in once (see
+ * lib/telemetry/finalize.ts), the same "detect once, never changes for
+ * the season" rule Battle Mode's Kart Kontrol applies per-round instead.
+ * Transmission mode isn't tracked for Immersive at all -- not worth
+ * reading out of memory.
+ *
+ * `onComplete` is called once the season actually exists server-side --
  * the caller (WarModeLanding) does router.refresh(), which naturally
  * swaps this wizard out for the live dashboard once war-mode/page.tsx
  * sees the new active Immersive season.
@@ -56,15 +34,11 @@ const EMPTY_LOADOUT: Loadout = { character: null, kart: null, transmission: null
 export function ImmersiveSetupWizard({ onCancel, onComplete }: { onCancel: () => void; onComplete: () => void }) {
   const [step, setStep] = useState<Step>("count");
   const [displayConfig, setDisplayConfig] = useState<DisplayConfig>("same-device");
-  const [adiSlot, setAdiSlot] = useState<1 | 2>(1);
-  const [adiLoadout, setAdiLoadout] = useState<Loadout>(EMPTY_LOADOUT);
-  const [renLoadout, setRenLoadout] = useState<Loadout>(EMPTY_LOADOUT);
   const [error, setError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
-  const renSlot: 1 | 2 = adiSlot === 1 ? 2 : 1;
-
-  const finish = (finalRenLoadout: Loadout) => {
+  const assign = (adiSlot: 1 | 2) => {
+    const renSlot: 1 | 2 = adiSlot === 1 ? 2 : 1;
     setStep("submitting");
     setError(null);
     startTransition(async () => {
@@ -77,28 +51,14 @@ export function ImmersiveSetupWizard({ onCancel, onComplete }: { onCancel: () =>
         const slotsResult = await setImmersiveSlotsAction(season.id, adiSlot, renSlot);
         if ("error" in slotsResult && slotsResult.error) {
           setError(slotsResult.error);
-          setStep("ren-transmission");
-          return;
-        }
-
-        const loadoutResult = await setImmersiveLoadoutAction(season.id, {
-          adiCharacter: adiLoadout.character!,
-          adiKart: adiLoadout.kart!,
-          adiTransmission: adiLoadout.transmission!,
-          renCharacter: finalRenLoadout.character!,
-          renKart: finalRenLoadout.kart!,
-          renTransmission: finalRenLoadout.transmission!,
-        });
-        if ("error" in loadoutResult && loadoutResult.error) {
-          setError(loadoutResult.error);
-          setStep("ren-transmission");
+          setStep("assign");
           return;
         }
 
         onComplete();
       } catch {
         setError("Couldn't start the Immersive season — try again in a moment.");
-        setStep("ren-transmission");
+        setStep("assign");
       }
     });
   };
@@ -167,113 +127,18 @@ export function ImmersiveSetupWizard({ onCancel, onComplete }: { onCancel: () =>
   if (step === "assign") {
     return (
       <StepShell
-        title="Player Assignment"
-        subtitle="Which on-screen racer is which player? Swap if the tracker has them backwards."
+        title="Are you Player 1 or Player 2?"
+        subtitle="Whichever on-screen racer slot each of you is actually sitting at — tap the player who's at Player 1."
         onBack={() => setStep("display")}
         onCancel={onCancel}
       >
-        <div className="space-y-2.5 mb-5">
-          <SlotRow label={PLAYERS.adi.name} accent="adi" slot={adiSlot} />
-          <SlotRow label={PLAYERS.ren.name} accent="ren" slot={renSlot} />
+        <div className="grid grid-cols-2 gap-3 mb-2">
+          <PlayerSlotButton accent="adi" label={PLAYERS.adi.name} onClick={(e) => { tapPulse(e.currentTarget); assign(1); }} />
+          <PlayerSlotButton accent="ren" label={PLAYERS.ren.name} onClick={(e) => { tapPulse(e.currentTarget); assign(2); }} />
         </div>
-        <button
-          onClick={(e) => {
-            tapPulse(e.currentTarget);
-            setAdiSlot(adiSlot === 1 ? 2 : 1);
-          }}
-          className="w-full rounded-lg border border-border bg-surface px-4 py-2.5 text-sm font-hud font-bold tracking-wide text-text-dim hover:text-text hover:border-border-strong transition-colors mb-5"
-        >
-          SWAP PLAYERS
-        </button>
-        <button
-          onClick={(e) => {
-            tapPulse(e.currentTarget);
-            setStep("adi-character");
-          }}
-          className="w-full rounded-xl bg-danger px-6 py-3.5 font-display text-base tracking-widest text-paper hover:brightness-110 shadow-lg shadow-danger/30 transition-all"
-        >
-          CONTINUE
-        </button>
-      </StepShell>
-    );
-  }
-
-  // --- loadout steps: Adi first, then Ren, reusing the Kart Kontrol pickers directly ---
-
-  if (step === "adi-character") {
-    return (
-      <LoadoutIntro accent="adi" playerName={PLAYERS.adi.name}>
-        <CharacterPicker accent="adi" onSelect={(id) => { setAdiLoadout({ ...adiLoadout, character: id }); setStep("adi-kart"); }} />
-      </LoadoutIntro>
-    );
-  }
-  if (step === "adi-kart" && adiLoadout.character) {
-    const weightClass = getCharacterWeightClass(adiLoadout.character);
-    if (!weightClass) {
-      setStep("adi-character");
-      return null;
-    }
-    return (
-      <LoadoutIntro accent="adi" playerName={PLAYERS.adi.name}>
-        <KartPicker
-          characterId={adiLoadout.character}
-          characterName={CHARACTERS_BY_ID.get(adiLoadout.character)?.name ?? adiLoadout.character}
-          weightClass={weightClass}
-          accent="adi"
-          onBack={() => setStep("adi-character")}
-          onSelect={(id) => { setAdiLoadout({ ...adiLoadout, kart: id }); setStep("adi-transmission"); }}
-        />
-      </LoadoutIntro>
-    );
-  }
-  if (step === "adi-transmission" && adiLoadout.kart) {
-    return (
-      <LoadoutIntro accent="adi" playerName={PLAYERS.adi.name}>
-        <TransmissionPicker
-          kartName={VEHICLES_BY_ID.get(adiLoadout.kart)?.name ?? adiLoadout.kart}
-          onBack={() => setStep("adi-kart")}
-          onSelect={(transmission) => { setAdiLoadout({ ...adiLoadout, transmission }); setStep("ren-character"); }}
-        />
-      </LoadoutIntro>
-    );
-  }
-
-  if (step === "ren-character") {
-    return (
-      <LoadoutIntro accent="ren" playerName={PLAYERS.ren.name}>
-        <CharacterPicker accent="ren" onSelect={(id) => { setRenLoadout({ ...renLoadout, character: id }); setStep("ren-kart"); }} />
-      </LoadoutIntro>
-    );
-  }
-  if (step === "ren-kart" && renLoadout.character) {
-    const weightClass = getCharacterWeightClass(renLoadout.character);
-    if (!weightClass) {
-      setStep("ren-character");
-      return null;
-    }
-    return (
-      <LoadoutIntro accent="ren" playerName={PLAYERS.ren.name}>
-        <KartPicker
-          characterId={renLoadout.character}
-          characterName={CHARACTERS_BY_ID.get(renLoadout.character)?.name ?? renLoadout.character}
-          weightClass={weightClass}
-          accent="ren"
-          onBack={() => setStep("ren-character")}
-          onSelect={(id) => { setRenLoadout({ ...renLoadout, kart: id }); setStep("ren-transmission"); }}
-        />
-      </LoadoutIntro>
-    );
-  }
-  if (step === "ren-transmission" && renLoadout.kart) {
-    return (
-      <LoadoutIntro accent="ren" playerName={PLAYERS.ren.name}>
-        <TransmissionPicker
-          kartName={VEHICLES_BY_ID.get(renLoadout.kart)?.name ?? renLoadout.kart}
-          onBack={() => setStep("ren-kart")}
-          onSelect={(transmission) => finish({ ...renLoadout, transmission })}
-        />
+        <p className="text-xs text-text-faint">Whoever you tap is Player 1; the other is Player 2.</p>
         {error && <p className="text-sm text-danger mt-4">{error}</p>}
-      </LoadoutIntro>
+      </StepShell>
     );
   }
 
@@ -318,28 +183,27 @@ function StepShell({
   );
 }
 
-function SlotRow({ label, accent, slot }: { label: string; accent: "adi" | "ren"; slot: 1 | 2 }) {
+function PlayerSlotButton({
+  accent,
+  label,
+  onClick,
+}: {
+  accent: "adi" | "ren";
+  label: string;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+}) {
   return (
-    <div
+    <button
+      onClick={onClick}
       className={cn(
-        "flex items-center justify-between rounded-lg border px-4 py-2.5 text-sm",
-        accent === "adi" ? "border-adi/40 bg-adi/10" : "border-ren/40 bg-ren/10"
+        "flex flex-col items-center gap-1 rounded-xl border-2 px-4 py-6 font-display text-lg tracking-wide shadow-lg transition-all",
+        accent === "adi"
+          ? "border-adi/60 bg-adi/10 text-adi hover:border-adi hover:bg-adi/20"
+          : "border-ren/60 bg-ren/10 text-ren hover:border-ren hover:bg-ren/20"
       )}
     >
-      <span className={cn("font-medium", accent === "adi" ? "text-adi" : "text-ren")}>{label}</span>
-      <span className="font-hud text-xs font-bold tracking-wide text-text-faint">TRACKED PLAYER {slot}</span>
-    </div>
-  );
-}
-
-/** The Kart Kontrol pickers render on a dark backdrop (see Cockpit/BattleScreen) — this gives the wizard's loadout steps the same dark surface instead of the light StepShell above. */
-function LoadoutIntro({ accent, playerName, children }: { accent: "adi" | "ren"; playerName: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl bg-void px-4 sm:px-8 py-10">
-      <p className={cn("font-hud text-xs font-bold tracking-[0.25em] uppercase mb-4", accent === "adi" ? "text-adi" : "text-ren")}>
-        {playerName}&rsquo;s loadout
-      </p>
-      {children}
-    </div>
+      {label}
+      <span className="font-hud text-[10px] font-bold tracking-[0.2em] text-text-faint uppercase">Is Player 1</span>
+    </button>
   );
 }

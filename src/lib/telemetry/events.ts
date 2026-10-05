@@ -33,6 +33,7 @@ interface TelemetryEventBase {
 
 export type TelemetryEvent =
   | (TelemetryEventBase & { type: "circuit-detected"; circuitId: string })
+  | (TelemetryEventBase & { type: "loadout-detected"; slot: TelemetrySlot; characterId: string; kartId: string })
   | (TelemetryEventBase & { type: "position-update"; slot: TelemetrySlot; position: number; lap: number })
   | (TelemetryEventBase & { type: "lap-complete"; slot: TelemetrySlot; lap: number; lapTimeMs: number })
   | (TelemetryEventBase & { type: "item-received"; slot: TelemetrySlot; itemId: ItemId; lap: number })
@@ -44,6 +45,7 @@ export interface TelemetryEventBatch {
 
 export type StoredTelemetryEvent =
   | (TelemetryEventBase & { type: "circuit-detected"; circuitId: string })
+  | (TelemetryEventBase & { type: "loadout-detected"; playerId: PlayerId; characterId: string; kartId: string })
   | (TelemetryEventBase & { type: "position-update"; playerId: PlayerId; position: number; lap: number })
   | (TelemetryEventBase & { type: "lap-complete"; playerId: PlayerId; lap: number; lapTimeMs: number })
   | (TelemetryEventBase & { type: "item-received"; playerId: PlayerId; itemId: ItemId; lap: number })

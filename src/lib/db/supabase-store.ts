@@ -354,6 +354,14 @@ export const supabaseStore: DataStore = {
         ren_lap2_time_ms: input.renLap2TimeMs ?? null,
         ren_lap3_time_ms: input.renLap3TimeMs ?? null,
         ren_final_time_ms: input.renFinalTimeMs ?? null,
+        // Immersive only -- the season's auto-detected loadout, copied
+        // onto every race (see lib/telemetry/finalize.ts). undefined on
+        // every Manual/Battle RaceInput, so these columns stay whatever
+        // the table default is (null) for those races.
+        adi_character: input.adiCharacter ?? undefined,
+        adi_kart: input.adiKart ?? undefined,
+        ren_character: input.renCharacter ?? undefined,
+        ren_kart: input.renKart ?? undefined,
       })
       .select()
       .single();

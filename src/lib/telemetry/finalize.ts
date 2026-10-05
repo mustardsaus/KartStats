@@ -27,6 +27,7 @@ type FinishedEvent = Extract<StoredTelemetryEvent, { type: "race-finished" }>;
 type LapCompleteEvent = Extract<StoredTelemetryEvent, { type: "lap-complete" }>;
 type CircuitDetectedEvent = Extract<StoredTelemetryEvent, { type: "circuit-detected" }>;
 type PositionUpdateEvent = Extract<StoredTelemetryEvent, { type: "position-update" }>;
+type LoadoutDetectedEvent = Extract<StoredTelemetryEvent, { type: "loadout-detected" }>;
 type ItemReceivedEvent = Extract<StoredTelemetryEvent, { type: "item-received" }>;
 
 function lapTimeMs(events: StoredTelemetryEvent[], playerId: PlayerId, lap: 1 | 2 | 3): number | null {
@@ -61,6 +62,46 @@ export async function maybeFinalizeImmersiveRace(
   const adiFinish = finishes.get("adi")!;
   const renFinish = finishes.get("ren")!;
 
+  const store = getStore();
+
+  // Loadout: detected once, from whichever race finalizes first, and
+  // never touched again -- same "fixed for the whole season" rule the
+  // Player Assignment wizard step used to apply manually (see
+  // ImmersiveSetupWizard). If the season already has one locked in, reuse
+  // it as-is and ignore any freshly-detected values this race; only a
+  // season with nothing set yet gets one written here.
+  const seasons = await store.getSeasons();
+  const season = seasons.find((s) => s.id === seasonId);
+  let adiCharacter = season?.adiCharacter ?? null;
+  let adiKart = season?.adiKart ?? null;
+  let renCharacter = season?.renCharacter ?? null;
+  let renKart = season?.renKart ?? null;
+
+  if (season && !adiCharacter && !renCharacter) {
+    const loadoutEvents = events.filter((e): e is LoadoutDetectedEvent => e.type === "loadout-detected");
+    const adiLoadout = loadoutEvents.find((e) => e.playerId === "adi");
+    const renLoadout = loadoutEvents.find((e) => e.playerId === "ren");
+    if (adiLoadout && renLoadout) {
+      adiCharacter = adiLoadout.characterId;
+      adiKart = adiLoadout.kartId;
+      renCharacter = renLoadout.characterId;
+      renKart = renLoadout.kartId;
+      await store.setSeasonImmersiveLoadout(seasonId, {
+        adiCharacter,
+        adiKart,
+        adiTransmission: null,
+        renCharacter,
+        renKart,
+        renTransmission: null,
+      });
+    }
+    // If either player's loadout-detected event is missing (e.g. the
+    // tracker lost one player's struct before reading it), this race
+    // simply finalizes with no loadout -- never fabricated, same as
+    // every other "absent" convention on RawRace -- and the season tries
+    // again from the next race's events.
+  }
+
   const input: RaceInput = {
     circuitId: circuitEvent.circuitId,
     adiFinishingPosition: adiFinish.finalPosition,
@@ -73,9 +114,12 @@ export async function maybeFinalizeImmersiveRace(
     renLap2TimeMs: lapTimeMs(events, "ren", 2),
     renLap3TimeMs: lapTimeMs(events, "ren", 3),
     renFinalTimeMs: renFinish.finalTimeMs ?? null,
+    adiCharacter,
+    adiKart,
+    renCharacter,
+    renKart,
   };
 
-  const store = getStore();
   const race = await store.addRace(seasonId, input);
 
   const positionSamples: RacePositionSample[] = events
