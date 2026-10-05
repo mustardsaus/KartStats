@@ -1,14 +1,16 @@
+"use client";
+
+import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { CHARACTERS_BY_ID } from "@/lib/data/characters";
+import { CHARACTERS_BY_ID, characterImageUrl } from "@/lib/data/characters";
 
 /**
- * A small "face" for a picked character. No licensed artwork is bundled
- * for the roster (see the module comment in lib/data/characters.ts), so
- * this is a clean colored initial-letter badge rather than a broken
- * image — the same placeholder CharacterPicker's own list already used
- * per-row, pulled out here so every place that shows an ALREADY-PICKED
- * character (the kart step's header, the "use previous setup" summary)
- * can show the same small icon next to the name instead of bare text.
+ * A small "face" for a picked character. Real portrait art is bundled
+ * under public/characters/ (see characterImageUrl) for every roster
+ * entry except "mii" (no single clean portrait exists on the wiki) --
+ * this falls back to the original colored initial-letter badge whenever
+ * the image 404s, so a missing/unrecognized id never shows a broken
+ * image.
  */
 export function CharacterIcon({
   characterId,
@@ -21,7 +23,23 @@ export function CharacterIcon({
   size?: "sm" | "md";
   className?: string;
 }) {
+  const [imageFailed, setImageFailed] = useState(false);
   const name = CHARACTERS_BY_ID.get(characterId)?.name ?? characterId;
+  const dimension = size === "sm" ? "h-6 w-6" : "h-10 w-10";
+
+  if (!imageFailed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- small decorative icon, not worth next/image's config here
+      <img
+        src={characterImageUrl(characterId)}
+        alt={name}
+        title={name}
+        onError={() => setImageFailed(true)}
+        className={cn("inline-block shrink-0 rounded-full object-cover object-top", dimension, className)}
+      />
+    );
+  }
+
   return (
     <span
       title={name}

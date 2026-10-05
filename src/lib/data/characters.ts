@@ -51,6 +51,18 @@ export const CHARACTERS: CharacterInfo[] = [
 
 export const CHARACTERS_BY_ID = new Map(CHARACTERS.map((c) => [c.id, c]));
 
+/**
+ * Portrait art downloaded from MarioWiki (public/characters/<id>.png) --
+ * one official artwork per character, resized for the web. "mii" has no
+ * single clean portrait on the wiki (its page shows a group photo), so
+ * there's no file for it -- CharacterIcon falls back to the colored
+ * initial badge when the image 404s, same as it always did before any
+ * art existed.
+ */
+export function characterImageUrl(characterId: string): string {
+  return `/characters/${characterId}.png`;
+}
+
 export function getCharacterWeightClass(characterId: string): WeightClass | null {
   return CHARACTERS_BY_ID.get(characterId)?.weightClass ?? null;
 }

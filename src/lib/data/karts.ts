@@ -65,6 +65,11 @@ export const VEHICLES: VehicleInfo[] = [
 
 export const VEHICLES_BY_ID = new Map(VEHICLES.map((v) => [v.id, v]));
 
+/** Icon art downloaded from MarioWiki's vehicle gallery (public/vehicles/<id>.png). */
+export function vehicleImageUrl(vehicleId: string): string {
+  return `/vehicles/${vehicleId}.png`;
+}
+
 /** Every kart/bike a character of this weight class is actually allowed to drive. */
 export function getVehiclesForWeightClass(weightClass: WeightClass): VehicleInfo[] {
   return VEHICLES.filter((v) => v.weightClass === weightClass);
