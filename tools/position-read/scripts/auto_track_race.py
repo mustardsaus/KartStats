@@ -228,6 +228,17 @@ SINSTANCE_ADDR = 0x809B8F70
 RACECONFIG_SINSTANCE_ADDR = 0x809B8F68
 RACECONFIG_TO_SETTINGS_OFFSET = 0x1758  # RaceConfig_base + this = RacedataSettings addr
 
+# --- RacedataPlayer[12] (character/vehicle, read once per race) -----------
+# See discover_character_vehicle.py's module doc for the full derivation
+# and sourcing (mkw-structures' racedata.h) -- this reuses that same
+# research now that it's been checked over several races via that script.
+RACEDATA_PLAYER_STRIDE = 0xF0            # RacedataScenario.players[12] stride
+PLAYERS_TO_SETTINGS_GAP = 0xB40          # RacedataScenario.settings(0xB48) - players(0x8)
+RACEDATAPLAYER_OFF_VEHICLE_ID = 0x8      # uint32
+RACEDATAPLAYER_OFF_CHARACTER_ID = 0xC    # uint32
+RACEDATAPLAYER_VEHICLE_ID_MAX = 0x23     # 36 vehicles, 0-indexed
+RACEDATAPLAYER_CHARACTER_ID_MAX = 0x2F   # generous headroom past the 24 non-Mii racers for Mii slots
+
 # Every real MKW GP/VS race is exactly 3 laps -- used for DISPLAY only. Live
 # testing (once the fast path removed the lap-3 lock-on delay and gave us
 # clean lap-1 data for the first time) showed maxLap does NOT hold steady
@@ -864,6 +875,33 @@ def get_racedata_settings_addr():
     if course_id is None or course_id > 0x29:
         return None
     return settings_addr
+
+
+def detect_loadout(player_addr: int):
+    """Reads one player's chosen character/vehicle id, once -- via the
+    RacedataPlayer[12] array, indexed by that player's own id byte
+    (PLAYER_OFF_ID), the same id read_all_players already uses. Returns
+    (character_id, vehicle_id) or None if the player's id can't be read,
+    the settings address isn't currently resolvable, or either value
+    fails its sanity check -- never guessed, same spirit as every other
+    reader in this file."""
+    try:
+        player_id = dme.read_byte(player_addr + PLAYER_OFF_ID)
+    except Exception:
+        return None
+    if player_id is None or player_id > 11:
+        return None
+    settings_addr = get_racedata_settings_addr()
+    if settings_addr is None:
+        return None
+    slot_addr = settings_addr - PLAYERS_TO_SETTINGS_GAP + player_id * RACEDATA_PLAYER_STRIDE
+    vehicle_id = read_ptr(slot_addr + RACEDATAPLAYER_OFF_VEHICLE_ID)
+    character_id = read_ptr(slot_addr + RACEDATAPLAYER_OFF_CHARACTER_ID)
+    if vehicle_id is None or character_id is None:
+        return None
+    if not (0 <= vehicle_id <= RACEDATAPLAYER_VEHICLE_ID_MAX and 0 <= character_id <= RACEDATAPLAYER_CHARACTER_ID_MAX):
+        return None
+    return character_id, vehicle_id
 
 
 def find_course_id():
@@ -1525,6 +1563,17 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
                 circ = bridge.COURSE_ID_TO_CIRCUIT_ID.get(cid) if cid is not None else None
                 if circ and circ != telemetry.circuit_id:
                     telemetry.send_circuit_detected(race_num, circ)
+                # Character/kart: read once here too -- doesn't change
+                # mid-race, and the server only ever uses the FIRST race's
+                # reading for the whole season anyway (see finalize.ts),
+                # so later races' reads are harmless no-ops there.
+                loadout1 = detect_loadout(player_addr)
+                if loadout1:
+                    telemetry.send_loadout_detected(race_num, 1, *loadout1)
+                if other_addr is not None:
+                    loadout2 = detect_loadout(other_addr)
+                    if loadout2:
+                        telemetry.send_loadout_detected(race_num, 2, *loadout2)
             ts_ms = int((time.time() - race_start) * 1000)
             telemetry.poll_slot(race_num, ts_ms, 1, cur, bool(flags & STATE_FINISHING))
             if other_cur is not None:
@@ -1733,21 +1782,27 @@ def _print_pointer_chase_summary(race_num: int, ptr_tracked: dict) -> None:
 
 
 def _build_telemetry_from_args() -> "bridge.TelemetryBridge | None":
-    """KartStats bridge only. Parses --season-id/--api-url/--token (env
-    vars KARTSTATS_SEASON_ID/KARTSTATS_API_URL/KARTSTATS_BRIDGE_TOKEN as
-    defaults) and returns a configured TelemetryBridge, or None if the
-    bridge module isn't importable or no season id was given -- in both
-    of those cases this script runs exactly as it always has, pure local
-    printing, no network calls at all. A season id with no token is
-    treated as a configuration mistake worth flagging, not silently
-    ignored, since sending events with no Authorization header would just
-    get a 401 from the route every single tick."""
+    """KartStats bridge only. Parses --api-url/--token (env vars
+    KARTSTATS_API_URL/KARTSTATS_BRIDGE_TOKEN as defaults) and returns a
+    configured TelemetryBridge, or None if the bridge module isn't
+    importable or no token was given -- in both of those cases this
+    script runs exactly as it always has, pure local printing, no network
+    calls at all.
+
+    No --season-id flag needed any more: the season to post into is
+    found automatically from KartStats' own /api/telemetry/active-season
+    endpoint (see kartstats_bridge.discover_season_id()) -- whichever
+    Immersive season is currently sitting on "Waiting for Dolphin...".
+    --season-id is still accepted as an override (skips discovery,
+    posts straight into that id) for the rare case two seasons are
+    somehow waiting at once and discovery picks the wrong one, but
+    nothing has to be copy-pasted for the normal case."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--season-id",
         default=os.environ.get("KARTSTATS_SEASON_ID"),
-        help="KartStats Immersive season id (copy it from the season's header in the app). "
-        "Omit to run this script exactly as before, with no KartStats bridge at all.",
+        help="Override: post straight into this season id instead of auto-discovering the "
+        "waiting Immersive season. Normally not needed.",
     )
     parser.add_argument(
         "--api-url",
@@ -1757,29 +1812,32 @@ def _build_telemetry_from_args() -> "bridge.TelemetryBridge | None":
     parser.add_argument(
         "--token",
         default=os.environ.get("KARTSTATS_BRIDGE_TOKEN"),
-        help="Must match the running KartStats app's TELEMETRY_BRIDGE_TOKEN env var.",
+        help="Must match the running KartStats app's TELEMETRY_BRIDGE_TOKEN env var. "
+        "Omit to run this script exactly as before, with no KartStats bridge at all.",
     )
     args = parser.parse_args()
 
-    if not args.season_id:
+    if not args.token:
         return None
     if bridge is None:
         print(
-            "--season-id was given but kartstats_bridge.py couldn't be imported -- "
+            "--token was given but kartstats_bridge.py couldn't be imported -- "
             "running with the KartStats bridge disabled.",
             file=sys.stderr,
         )
         return None
-    if not args.token:
-        print(
-            "--season-id was given but no --token / KARTSTATS_BRIDGE_TOKEN was set -- "
-            "running with the KartStats bridge disabled (every POST would just get a 401).",
-            file=sys.stderr,
-        )
-        return None
 
-    print(f"KartStats bridge enabled -- posting to {args.api_url} for season {args.season_id}.\n")
-    return bridge.TelemetryBridge(season_id=args.season_id, api_url=args.api_url, token=args.token)
+    season_id = args.season_id
+    if not season_id:
+        print(f"KartStats bridge: waiting for an Immersive season to start ({args.api_url})...", flush=True)
+        while not season_id:
+            season_id = bridge.discover_season_id(args.api_url, args.token)
+            if not season_id:
+                time.sleep(3.0)
+        print(f"KartStats bridge: found season {season_id}.\n", flush=True)
+
+    print(f"KartStats bridge enabled -- posting to {args.api_url} for season {season_id}.\n")
+    return bridge.TelemetryBridge(season_id=season_id, api_url=args.api_url, token=args.token)
 
 
 def main() -> None:

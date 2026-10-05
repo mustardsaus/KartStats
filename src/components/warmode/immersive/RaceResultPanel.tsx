@@ -6,6 +6,10 @@ import { getRaceTelemetryDetailAction } from "@/app/war-mode/immersive-actions";
 import { PLAYERS } from "@/lib/data/points-mapping";
 import { RacePositionGraph } from "./RacePositionGraph";
 import { RaceItemFeed } from "./RaceItemFeed";
+import { CharacterIcon } from "../battle/CharacterIcon";
+import { VehicleIcon } from "../battle/VehicleIcon";
+import { CHARACTERS_BY_ID } from "@/lib/data/characters";
+import { VEHICLES_BY_ID } from "@/lib/data/karts";
 import { Flag, Loader2 } from "lucide-react";
 import { cn, formatRaceTimeMs as formatTime } from "@/lib/utils";
 
@@ -51,6 +55,8 @@ export function RaceResultPanel({ race, circuitName }: { race: RawRace; circuitN
           position={race.adiFinishingPosition}
           finalMs={race.adiFinalTimeMs}
           laps={[race.adiLap1TimeMs, race.adiLap2TimeMs, race.adiLap3TimeMs]}
+          characterId={race.adiCharacter}
+          kartId={race.adiKart}
           winner={winner === "adi"}
         />
         <ResultCard
@@ -58,6 +64,8 @@ export function RaceResultPanel({ race, circuitName }: { race: RawRace; circuitN
           position={race.renFinishingPosition}
           finalMs={race.renFinalTimeMs}
           laps={[race.renLap1TimeMs, race.renLap2TimeMs, race.renLap3TimeMs]}
+          characterId={race.renCharacter}
+          kartId={race.renKart}
           winner={winner === "ren"}
         />
       </div>
@@ -84,12 +92,16 @@ function ResultCard({
   position,
   finalMs,
   laps,
+  characterId,
+  kartId,
   winner,
 }: {
   playerId: PlayerId;
   position: number;
   finalMs: number | null | undefined;
   laps: Array<number | null | undefined>;
+  characterId: string | null | undefined;
+  kartId: string | null | undefined;
   winner: boolean;
 }) {
   const accent = playerId === "adi" ? "var(--color-adi)" : "var(--color-ren)";
@@ -99,11 +111,24 @@ function ResultCard({
   const didNotFinish = finalMs == null;
   return (
     <div className={cn("rounded-xl border px-4 py-3", winner ? "border-gold/50 bg-gold/10" : "border-border bg-surface")}>
-      <p className="font-hud text-xs font-bold tracking-wide" style={{ color: accent }}>
-        {PLAYERS[playerId].name.toUpperCase()}
-      </p>
+      <div className="flex items-center justify-between">
+        <p className="font-hud text-xs font-bold tracking-wide" style={{ color: accent }}>
+          {PLAYERS[playerId].name.toUpperCase()}
+        </p>
+        {characterId && kartId && (
+          <div className="flex items-center -space-x-1.5">
+            <CharacterIcon characterId={characterId} accent={playerId} size="sm" className="ring-2 ring-surface" />
+            <VehicleIcon vehicleId={kartId} accent={playerId} size="sm" className="ring-2 ring-surface" />
+          </div>
+        )}
+      </div>
       <p className="text-stat text-2xl font-bold text-text">P{position}</p>
       <p className="text-xs text-text-faint">{didNotFinish ? "Race ended before finishing" : formatTime(finalMs)}</p>
+      {characterId && kartId && (
+        <p className="text-xs text-text-faint mt-0.5">
+          {CHARACTERS_BY_ID.get(characterId)?.name ?? characterId} &middot; {VEHICLES_BY_ID.get(kartId)?.name ?? kartId}
+        </p>
+      )}
       <div className="mt-2 space-y-0.5">
         {laps.map((ms, i) => (
           <p key={i} className="flex justify-between text-xs text-text-faint">

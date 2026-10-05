@@ -67,6 +67,60 @@ COURSE_ID_TO_CIRCUIT_ID = {
     0x1E: "gba-bowser-castle-3", 0x1F: "gba-shy-guy-beach",
 }
 
+# character_id (RacedataPlayer.characterId -- see auto_track_race.py's
+# detect_loadout()) -> KartStats character slug (src/lib/data/characters.ts).
+# IDs and names checked against the Custom Mario Kart wiki's "List of
+# Identifiers" page (the same source auto_track_race.py's game-build
+# constants are checked against) -- "mii" (ids 0x18+) has no single slug
+# in KartStats' roster, so it's intentionally left out of this table: an
+# unmapped id is skipped by send_loadout_detected rather than guessed.
+CHARACTER_ID_TO_SLUG = {
+    0x00: "mario", 0x01: "baby-peach", 0x02: "waluigi", 0x03: "bowser",
+    0x04: "baby-daisy", 0x05: "dry-bones", 0x06: "baby-mario", 0x07: "luigi",
+    0x08: "toad", 0x09: "donkey-kong", 0x0A: "yoshi", 0x0B: "wario",
+    0x0C: "baby-luigi", 0x0D: "toadette", 0x0E: "koopa-troopa", 0x0F: "daisy",
+    0x10: "peach", 0x11: "birdo", 0x12: "diddy-kong", 0x13: "king-boo",
+    0x14: "bowser-jr", 0x15: "dry-bowser", 0x16: "funky-kong", 0x17: "rosalina",
+}
+
+# vehicle_id (RacedataPlayer.vehicleId) -> KartStats vehicle slug
+# (src/lib/data/karts.ts). NOTE: an earlier draft of this table (in
+# discover_character_vehicle.py) was missing "Quacker" entirely, which
+# shifted every id from 0x1B onward by one and mislabeled 9 of the 36
+# vehicles -- this table was re-checked against the same wiki source
+# specifically because of that, not assumed correct by inheritance.
+VEHICLE_ID_TO_SLUG = {
+    0x00: "standard-kart-s", 0x01: "standard-kart-m", 0x02: "standard-kart-l",
+    0x03: "booster-seat", 0x04: "classic-dragster", 0x05: "offroader",
+    0x06: "mini-beast", 0x07: "wild-wing", 0x08: "flame-flyer",
+    0x09: "cheep-charger", 0x0A: "super-blooper", 0x0B: "piranha-prowler",
+    0x0C: "tiny-titan", 0x0D: "daytripper", 0x0E: "jetsetter",
+    0x0F: "blue-falcon", 0x10: "sprinter", 0x11: "honeycoupe",
+    0x12: "standard-bike-s", 0x13: "standard-bike-m", 0x14: "standard-bike-l",
+    0x15: "bullet-bike", 0x16: "mach-bike", 0x17: "flame-runner",
+    0x18: "bit-bike", 0x19: "sugarscoot", 0x1A: "wario-bike",
+    0x1B: "quacker", 0x1C: "zip-zip", 0x1D: "shooting-star",
+    0x1E: "magikruiser", 0x1F: "sneakster", 0x20: "spear",
+    0x21: "jet-bubble", 0x22: "dolphin-dasher", 0x23: "phantom",
+}
+
+
+def discover_season_id(api_url: str, token: str, timeout_s: float = 10.0):
+    """GET the companion /active-season endpoint (same host as api_url,
+    swap the /events tail for /active-season) and return its seasonId, or
+    None on any failure/absence -- callers poll this in a loop rather than
+    treating a None as fatal, since "no Immersive season waiting yet" is
+    the normal state between seasons."""
+    url = api_url.rsplit("/events", 1)[0] + "/active-season"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            data = json.loads(resp.read())
+        return data.get("seasonId")
+    except Exception:
+        return None
+
+
 POST_TIMEOUT_S = 30.0  # one POST per race, from a background thread; generous so a cold start can't fail it
 ERROR_LOG_INTERVAL_S = 10.0
 BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "race_backups")
@@ -106,6 +160,29 @@ class TelemetryBridge:
         self.circuit_id = circuit_id
         self._circuit_event = event
         self._outbox.put([event])
+
+    def send_loadout_detected(self, race_number: int, slot: int, character_id: int, vehicle_id: int):
+        """Queued (not sent immediately) -- goes out with the rest of this
+        race's batch at finish_race(). KartStats only ever USES the first
+        one it gets for a season (see lib/telemetry/finalize.ts), so
+        sending it every race is harmless, not wasteful logic to special-
+        case out here. An id this bridge doesn't have a slug for (a Mii)
+        is skipped entirely -- never guessed."""
+        char_slug = CHARACTER_ID_TO_SLUG.get(character_id)
+        kart_slug = VEHICLE_ID_TO_SLUG.get(vehicle_id)
+        if not char_slug or not kart_slug:
+            return
+        self._queue(
+            {
+                "type": "loadout-detected",
+                "seasonId": self.season_id,
+                "raceNumber": race_number,
+                "tsMs": 0,
+                "slot": slot,
+                "characterId": char_slug,
+                "kartId": kart_slug,
+            }
+        )
 
     def poll_slot(self, race_number: int, ts_ms: int, slot: int, reading, finishing: bool):
         """`reading` is (position, lap, maxlap, flags) from read_player(),
