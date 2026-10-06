@@ -104,6 +104,20 @@ VEHICLE_ID_TO_SLUG = {
     0x21: "jet-bubble", 0x22: "dolphin-dasher", 0x23: "phantom",
 }
 
+# item_id (ITEMPacket.item_tail, read via auto_track_race.py's
+# read_item_packet -- the one item-related field this project has
+# actually validated, via the same strict multi-field shape-check
+# trusted for Raceinfo/RaceConfig; see _itemhandler_shape_ok) -> KartStats
+# ItemId slug (src/lib/data/items.ts). Covers every real item id
+# (0x00-0x12); the "(no item)" sentinel (0x14) is never passed in here.
+ITEM_ID_TO_SLUG = {
+    0x00: "green-shell", 0x01: "red-shell", 0x02: "banana", 0x03: "fake-item-box",
+    0x04: "mushroom", 0x05: "triple-mushrooms", 0x06: "bob-omb", 0x07: "blue-shell",
+    0x08: "lightning", 0x09: "star", 0x0A: "golden-mushroom", 0x0B: "mega-mushroom",
+    0x0C: "blooper", 0x0D: "pow-block", 0x0E: "thunder-cloud", 0x0F: "bullet-bill",
+    0x10: "triple-green-shells", 0x11: "triple-red-shells", 0x12: "triple-bananas",
+}
+
 
 def discover_season_id(api_url: str, token: str, timeout_s: float = 10.0):
     """GET the companion /active-season endpoint (same host as api_url,
@@ -187,6 +201,20 @@ class TelemetryBridge:
         }
         self._loadout_events.append(event)
         self._outbox.put([event])
+
+    def send_item_received(self, race_number: int, slot: int, ts_ms: int, item_id: int, lap: int):
+        """Queued into the end-of-race batch like position/lap data --
+        unlike circuit/loadout, nothing in KartStats shows items live
+        today (only the post-race result panel and Tomfoolery Tales read
+        them), so there's no reason to pay for an immediate POST per
+        pickup. An item id with no slug mapping is skipped entirely,
+        never guessed -- in practice every real item id is mapped."""
+        item_slug = ITEM_ID_TO_SLUG.get(item_id)
+        if not item_slug:
+            return
+        self._queue(
+            {"type": "item-received", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": ts_ms, "slot": slot, "itemId": item_slug, "lap": lap}
+        )
 
     def poll_slot(self, race_number: int, ts_ms: int, slot: int, reading, finishing: bool):
         """`reading` is (position, lap, maxlap, flags) from read_player(),

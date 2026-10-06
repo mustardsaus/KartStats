@@ -363,6 +363,7 @@ ITEMHANDLER_SINSTANCE_ADDR = 0x809C20F8
 ITEMHANDLER_OFF_RECV_PACKETS = 0x10
 ITEMHANDLER_RECV_PACKET_COUNT = 12
 ITEM_OR_EMPTY_MAX = 0x14   # valid item ids (0x00-0x12) plus "(no item)" (0x14)
+ITEM_NONE_VALUE = 0x14     # the specific "(no item)" sentinel value -- a pickup is this -> a real item id
 ITEMPACKET_MODE_MAX = 7    # "activation mode: 0=no item, 1-7=handshake" per tockdom
 # All 12 recvPackets share the same global race clock (timer := RACE.timer/8
 # per tockdom), so real packets' timer bytes should sit close together.
@@ -1505,6 +1506,7 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
     item_packet_history = {}  # field_name -> [(elapsed_s, value), ...]
     itemhandler_addr = None
     itemhandler_scan_done = False  # one attempt per race -- see the call site's comment
+    prev_item_tail = {1: None, 2: None}  # slot -> last-seen item_tail, for pickup detection below
     ptr_tracked = {}  # source_offset -> {"target", "window", "history", "retargets"}
 
     other_addr = _find_other_player_addr(raceinfo_addr, player_addr)
@@ -1578,6 +1580,38 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
             telemetry.poll_slot(race_num, ts_ms, 1, cur, bool(flags & STATE_FINISHING))
             if other_cur is not None:
                 telemetry.poll_slot(race_num, ts_ms, 2, other_cur, bool(other_cur[3] & STATE_FINISHING))
+
+            # Item pickups: independent of SCAN_PLAYER_ITEM (that flag only
+            # gates the exploratory diagnostic scans below, used to FIND a
+            # trustworthy signal in the first place). item_tail is the one
+            # item-related field this project has actually validated with
+            # the same strict, multi-field shape-check already trusted for
+            # Raceinfo/RaceConfig (see _itemhandler_shape_ok) -- the only
+            # one wired to send anything real. A pickup is "item_tail went
+            # from empty straight to a real item id": MKW never lets a
+            # player hold two items at once, so that exact transition can
+            # only mean a box was just opened.
+            if itemhandler_addr is None and not itemhandler_scan_done:
+                itemhandler_addr = find_itemhandler_addr()
+                itemhandler_scan_done = True
+            if itemhandler_addr is not None:
+                for slot, addr, reading in ((1, player_addr, cur), (2, other_addr, other_cur)):
+                    if addr is None or reading is None:
+                        continue
+                    try:
+                        pid = dme.read_byte(addr + PLAYER_OFF_ID)
+                    except Exception:
+                        continue
+                    packet = read_item_packet(itemhandler_addr, pid)
+                    if packet is None:
+                        continue
+                    tail = packet[ITEMPACKET_OFF_ITEM_TAIL]
+                    prev_tail = prev_item_tail.get(slot)
+                    if prev_tail == ITEM_NONE_VALUE and HELD_ITEM_MIN <= tail <= HELD_ITEM_MAX:
+                        print(f"[race {race_num}] player {slot} picked up: {item_name(tail)} "
+                              f"(lap {reading[1]}/{STANDARD_LAP_COUNT})", flush=True)
+                        telemetry.send_item_received(race_num, slot, ts_ms, tail, reading[1])
+                    prev_item_tail[slot] = tail
         other_last = other_last_new
 
         if SCAN_PLAYER_ITEM:
