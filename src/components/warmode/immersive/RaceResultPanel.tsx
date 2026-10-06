@@ -109,6 +109,14 @@ function ResultCard({
   // the rest of the field finishes, so last place doesn't get to finish
   // its lap -- that lap's split is simply absent, not a slow time.
   const didNotFinish = finalMs == null;
+  // Total Race Time, derived the same way the user asked for it: summed
+  // from the three lap splits rather than trusted as a separately-tracked
+  // number. In practice this equals finalMs exactly -- both come from the
+  // same race_start wall-clock read, just decomposed differently -- but
+  // deriving it keeps this consistent with the rest of the codebase's
+  // "never store what's derivable" rule, and null (not a stale number)
+  // whenever a lap split is missing, same as a DNF.
+  const totalRaceTimeMs = laps.every((ms) => ms != null) ? laps.reduce((sum, ms) => sum + (ms as number), 0) : null;
   return (
     <div className={cn("rounded-xl border px-4 py-3", winner ? "border-gold/50 bg-gold/10" : "border-border bg-surface")}>
       <div className="flex items-center justify-between">
@@ -123,9 +131,19 @@ function ResultCard({
         )}
       </div>
       <p className="text-stat text-2xl font-bold text-text">P{position}</p>
-      <p className="text-xs text-text-faint">{didNotFinish ? "Race ended before finishing" : formatTime(finalMs)}</p>
+      <p className="text-xs text-text-faint">
+        {totalRaceTimeMs != null ? (
+          <>
+            <span className="text-text-dim font-medium">Total Race Time:</span> {formatTime(totalRaceTimeMs)}
+          </>
+        ) : didNotFinish ? (
+          "Race ended before finishing"
+        ) : (
+          formatTime(finalMs)
+        )}
+      </p>
       {characterId && kartId && (
-        <p className="text-xs text-text-faint mt-0.5">
+        <p className="text-xs text-text-dim font-medium mt-0.5">
           {CHARACTERS_BY_ID.get(characterId)?.name ?? characterId} &middot; {VEHICLES_BY_ID.get(kartId)?.name ?? kartId}
         </p>
       )}

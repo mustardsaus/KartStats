@@ -104,6 +104,15 @@ export function ImmersiveModeClient({
   // race" at all (first race of the season still in progress).
   const justFinishedRace = liveEvents.length === 0 && races.length > 0 ? races[races.length - 1] : null;
 
+  // While justFinishedRace is showing, this is still "Race N" (N = the
+  // race whose results are on screen) -- it only ticks ahead to N+1 once
+  // the next race's own data (currentCircuit) has actually shown up, not
+  // the instant races.length increments (which happens the moment the
+  // PREVIOUS race finalizes, well before anything about the next one is
+  // known). Avoids the header reading "Race 2 of 32" while the screen is
+  // still showing Race 1's results and Race 2 hasn't loaded yet.
+  const displayedRaceNumber = justFinishedRace ? justFinishedRace.raceNumber : races.length + 1;
+
   // The track photo behind everything: the one just detected for the
   // race in progress, or (once it's over, while the result panel is
   // showing) the one the just-finished race was run on. Falls back to
@@ -204,7 +213,7 @@ export function ImmersiveModeClient({
           <Radio className="h-3 w-3 animate-pulse" /> Immersive &mdash; Season {season.seasonNumber}
         </p>
         <h1 className="font-display text-2xl text-paper drop-shadow-lg">
-          Race {races.length + 1} of {RACES_PER_SEASON}
+          Race {displayedRaceNumber} of {RACES_PER_SEASON}
         </h1>
         <SeasonIdChip seasonId={season.id} />
       </div>
@@ -307,7 +316,7 @@ function LoadoutCard({ playerId, loadout }: { playerId: PlayerId; loadout: Resol
             <CharacterIcon characterId={loadout.characterId} accent={playerId} size="md" className="ring-2 ring-void/40" />
             <VehicleIcon vehicleId={loadout.kartId} accent={playerId} size="md" className="ring-2 ring-void/40" />
           </div>
-          <p className="text-xs text-paper/75">
+          <p className="text-xs text-paper/95 font-medium">
             {CHARACTERS_BY_ID.get(loadout.characterId)?.name ?? loadout.characterId} &middot;{" "}
             {VEHICLES_BY_ID.get(loadout.kartId)?.name ?? loadout.kartId}
           </p>
