@@ -17,7 +17,7 @@ import { VEHICLES_BY_ID } from "@/lib/data/karts";
 import { PLAYERS } from "@/lib/data/points-mapping";
 import { RaceResultPanel } from "./RaceResultPanel";
 import { cn } from "@/lib/utils";
-import { Loader2, Radio, Copy, Check } from "lucide-react";
+import { Loader2, Radio, Copy, Check, Terminal } from "lucide-react";
 
 /** One player's season-long loadout, resolved from either the locked-in season fields or a live detection event. */
 interface ResolvedLoadout {
@@ -236,6 +236,15 @@ export function ImmersiveModeClient({
         <div className="text-center py-20">
           <Loader2 className="h-8 w-8 text-danger mx-auto mb-4 animate-spin" />
           <p className="text-paper/75 text-sm">Waiting for Dolphin to detect the next race&hellip;</p>
+          <a
+            href="kartstats-tracker://start"
+            className="mt-5 inline-flex items-center gap-2 rounded-md border border-paper/20 bg-paper/5 px-4 py-2 text-xs text-paper/75 hover:bg-paper/10 hover:text-paper transition-colors"
+          >
+            <Terminal className="h-3.5 w-3.5" /> Start Tracker
+          </a>
+          <p className="mt-2 text-[11px] text-paper/40">
+            Opens a Terminal on your Mac and runs the tracker. One-time setup: open &ldquo;KartStats Tracker Launcher&rdquo; from Applications once.
+          </p>
         </div>
       )}
 
