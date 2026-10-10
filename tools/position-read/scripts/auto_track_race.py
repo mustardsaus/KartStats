@@ -357,6 +357,21 @@ HARD_SPEED_LIMITS = (120.0, 140.0)
 HARD_SPEED_LIMIT_TOL = 0.01
 SCAN_PLAYER_SPEED = bool(os.environ.get("MKW_SCAN_PLAYER_SPEED"))
 
+# First live test (a race with CPU racers filling the grid) found ~28 raw
+# structural hits, not 2 -- most of them frozen at the exact same value
+# (e.g. five different addresses all reading 0.8, seven all reading 0.7)
+# across several seconds, while a cluster of ~10-11 addresses changed
+# every tick and tracked an actual "player 2 overtakes" event in the
+# race log. Conclusion: PlayerSub10's shape also matches a static
+# per-vehicle-type KartParam table (one row per character/kart, never
+# changes during a race), plus the real per-kart live objects -- one per
+# racer on the grid (human AND CPU, since both use PlayerSub10). A
+# liveness filter removes the static-table false positives for free:
+# anything that hasn't moved by more than the epsilon across a settle
+# window is a table row, not a moving kart.
+PLAYERSUB10_LIVENESS_WINDOW = 6       # samples to collect before judging (~3s at 0.5s/tick)
+PLAYERSUB10_LIVENESS_EPSILON = 0.5    # min (max-min) speed swing over the window to count as "live"
+
 # --- Held item, step 2: ITEMHandler::sInstance, a documented static --------
 # Race 1's direct byte-level scan above ruled out every offset in the
 # player struct window itself: offsets spaced 0xC4 apart cycling through
@@ -1750,6 +1765,8 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
     next_speed_print = 0.0  # throttles MKW_SCAN_PLAYER_SPEED's print to ~2/sec, not every tick
     playersub10_addrs = None  # resolved once per race by find_playersub10_candidates(), like itemhandler_addr
     playersub10_scan_done = False
+    playersub10_history = {}       # addr -> list of recent vehicleSpeed readings, for the liveness filter
+    playersub10_live_addrs = None  # narrowed subset of playersub10_addrs once PLAYERSUB10_LIVENESS_WINDOW samples are in
     ptr_tracked = {}  # source_offset -> {"target", "window", "history", "retargets"}
 
     other_addr = _find_other_player_addr(raceinfo_addr, player_addr)
@@ -1872,11 +1889,48 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
                 now = time.time()
                 if playersub10_addrs and now >= next_speed_print:
                     next_speed_print = now + 0.5
-                    readings = []
+                    readings = {}
                     for addr in playersub10_addrs:
                         s = read_float(addr + PLAYERSUB10_OFF_VEHICLE_SPEED)
-                        readings.append(f"0x{addr:08X}: {s:.1f}" if s is not None else f"0x{addr:08X}: ?")
-                    print(f"[race {race_num}] speed (structural scan) -- " + " | ".join(readings), flush=True)
+                        readings[addr] = s
+                        if s is not None:
+                            hist = playersub10_history.setdefault(addr, [])
+                            hist.append(s)
+                            if len(hist) > PLAYERSUB10_LIVENESS_WINDOW:
+                                hist.pop(0)
+
+                    # Judge liveness once every candidate has a full window of
+                    # samples -- a static KartParam-table false positive sits
+                    # at an unchanging value the whole time; a real per-kart
+                    # object moves as the race plays out (lap 1 alone is
+                    # plenty of acceleration/cornering/boosts to clear the
+                    # epsilon). Judged exactly once per race, not re-checked
+                    # continuously, so a kart that happens to coast dead
+                    # straight for 3s right at the start isn't later re-added
+                    # or dropped -- that tradeoff is fine since the window is
+                    # early in lap 1 nearly every race.
+                    if playersub10_live_addrs is None and all(
+                        len(playersub10_history.get(a, [])) >= PLAYERSUB10_LIVENESS_WINDOW for a in playersub10_addrs
+                    ):
+                        live = [
+                            a for a in playersub10_addrs
+                            if (max(playersub10_history[a]) - min(playersub10_history[a])) >= PLAYERSUB10_LIVENESS_EPSILON
+                        ]
+                        dead = [a for a in playersub10_addrs if a not in live]
+                        playersub10_live_addrs = live
+                        print(
+                            f"  liveness filter: {len(live)} live, {len(dead)} static (dropped)"
+                            + (" -- live: " + ", ".join(f"0x{a:08X}" for a in live) if live else "")
+                            + (" -- expected 2 (one per human player) once CPU racers are also told apart" if len(live) != 2 else ""),
+                            flush=True,
+                        )
+
+                    show_addrs = playersub10_live_addrs if playersub10_live_addrs is not None else playersub10_addrs
+                    parts = [
+                        f"0x{a:08X}: {readings[a]:.1f}" if readings.get(a) is not None else f"0x{a:08X}: ?"
+                        for a in show_addrs
+                    ]
+                    print(f"[race {race_num}] speed (structural scan) -- " + " | ".join(parts), flush=True)
         other_last = other_last_new
 
         if SCAN_PLAYER_ITEM:
