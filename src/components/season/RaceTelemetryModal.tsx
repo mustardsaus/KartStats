@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { X, Loader2 } from "lucide-react";
-import type { RaceItemEvent, RacePositionSample } from "@/lib/types";
+import type { RaceItemEvent, RacePositionSample, RaceSpeedSample } from "@/lib/types";
 import { getRaceTelemetryDetailAction } from "@/app/war-mode/immersive-actions";
 import { RacePositionGraph } from "@/components/warmode/immersive/RacePositionGraph";
+import { RaceSpeedGraph } from "@/components/warmode/immersive/RaceSpeedGraph";
 import { RaceItemFeed } from "@/components/warmode/immersive/RaceItemFeed";
 
 /**
@@ -26,7 +27,7 @@ export function RaceTelemetryModal({
   raceLabel: string;
   onClose: () => void;
 }) {
-  const [detail, setDetail] = useState<{ positionSamples: RacePositionSample[]; itemEvents: RaceItemEvent[] } | null>(null);
+  const [detail, setDetail] = useState<{ positionSamples: RacePositionSample[]; itemEvents: RaceItemEvent[]; speedSamples: RaceSpeedSample[] } | null>(null);
 
   // No reset-on-change effect needed here -- the parent mounts this with
   // key={raceId} (see RaceTable), the same convention RaceResultPanel uses.
@@ -65,6 +66,7 @@ export function RaceTelemetryModal({
         {detail ? (
           <div className="space-y-5">
             <RacePositionGraph samples={detail.positionSamples} />
+            <RaceSpeedGraph samples={detail.speedSamples} />
             <RaceItemFeed events={detail.itemEvents} />
           </div>
         ) : (

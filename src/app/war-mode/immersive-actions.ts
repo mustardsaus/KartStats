@@ -93,14 +93,15 @@ export async function getImmersiveStateAction(seasonId: string) {
   return { season, races, liveEvents };
 }
 
-/** The permanent position/item timeline for one already-finalized race — powers the "race just finished" results panel (and, later, Season Rewind). */
+/** The permanent position/item/speed timeline for one already-finalized race — powers the "race just finished" results panel and Season Rewind's telemetry modal. */
 export async function getRaceTelemetryDetailAction(raceId: string) {
   const store = getStore();
-  const [positionSamples, itemEvents] = await Promise.all([
+  const [positionSamples, itemEvents, speedSamples] = await Promise.all([
     store.getRacePositionSamples(raceId),
     store.getRaceItemEvents(raceId),
+    store.getRaceSpeedSamples(raceId),
   ]);
-  return { positionSamples, itemEvents };
+  return { positionSamples, itemEvents, speedSamples };
 }
 
 /** The escape hatch for an Immersive season engaged by mistake — same guard as abandonBattleAction/abandonSeasonAction: only before any race is recorded. */

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { PlayerId, RaceItemEvent, RacePositionSample, RawRace } from "@/lib/types";
+import type { PlayerId, RaceItemEvent, RacePositionSample, RaceSpeedSample, RawRace } from "@/lib/types";
 import { getRaceTelemetryDetailAction } from "@/app/war-mode/immersive-actions";
 import { PLAYERS } from "@/lib/data/points-mapping";
 import { RacePositionGraph } from "./RacePositionGraph";
+import { RaceSpeedGraph } from "./RaceSpeedGraph";
 import { RaceItemFeed } from "./RaceItemFeed";
 import { CharacterIcon } from "../battle/CharacterIcon";
 import { VehicleIcon } from "../battle/VehicleIcon";
@@ -30,7 +31,7 @@ export function RaceResultPanel({
   circuitName: string;
   circuitRecord: CircuitRecord | null;
 }) {
-  const [detail, setDetail] = useState<{ positionSamples: RacePositionSample[]; itemEvents: RaceItemEvent[] } | null>(null);
+  const [detail, setDetail] = useState<{ positionSamples: RacePositionSample[]; itemEvents: RaceItemEvent[]; speedSamples: RaceSpeedSample[] } | null>(null);
 
   // No reset-on-change here -- the parent mounts this with key={race.id}
   // (see ImmersiveModeClient), so a new race is a fresh mount with fresh
@@ -66,6 +67,7 @@ export function RaceResultPanel({
           position={race.adiFinishingPosition}
           finalMs={race.adiFinalTimeMs}
           laps={[race.adiLap1TimeMs, race.adiLap2TimeMs, race.adiLap3TimeMs]}
+          topSpeed={race.adiTopSpeed}
           characterId={race.adiCharacter}
           kartId={race.adiKart}
           winner={winner === "adi"}
@@ -78,6 +80,7 @@ export function RaceResultPanel({
           position={race.renFinishingPosition}
           finalMs={race.renFinalTimeMs}
           laps={[race.renLap1TimeMs, race.renLap2TimeMs, race.renLap3TimeMs]}
+          topSpeed={race.renTopSpeed}
           characterId={race.renCharacter}
           kartId={race.renKart}
           winner={winner === "ren"}
@@ -92,6 +95,10 @@ export function RaceResultPanel({
       ) : (
         <>
           <RacePositionGraph samples={detail.positionSamples} />
+          <div className="mt-4">
+            <p className="font-hud text-xs font-bold tracking-[0.2em] text-text-faint uppercase mb-2">Speed</p>
+            <RaceSpeedGraph samples={detail.speedSamples} />
+          </div>
           <div className="mt-4">
             <p className="font-hud text-xs font-bold tracking-[0.2em] text-text-faint uppercase mb-2">Items</p>
             <RaceItemFeed events={detail.itemEvents} />
@@ -109,6 +116,7 @@ function ResultCard({
   position,
   finalMs,
   laps,
+  topSpeed,
   characterId,
   kartId,
   winner,
@@ -120,6 +128,7 @@ function ResultCard({
   position: number;
   finalMs: number | null | undefined;
   laps: Array<number | null | undefined>;
+  topSpeed: number | null | undefined;
   characterId: string | null | undefined;
   kartId: string | null | undefined;
   winner: boolean;
@@ -154,18 +163,34 @@ function ResultCard({
     circuitRecord.raceRecord.playerId === playerId &&
     circuitRecord.raceRecord.raceNumber === raceNumber &&
     circuitRecord.raceRecord.seasonId === seasonId;
+  // Same matched-by-identity rule as the two records above, just for the
+  // higher-is-better speed trap.
+  const isNewSpeedTrap =
+    circuitRecord?.speedTrap != null &&
+    circuitRecord.speedTrap.playerId === playerId &&
+    circuitRecord.speedTrap.raceNumber === raceNumber &&
+    circuitRecord.speedTrap.seasonId === seasonId;
+  const badgeLabels = [
+    isNewLapRecord && "Lap Record",
+    isNewRaceRecord && "Race Record",
+    isNewSpeedTrap && "Speed Trap",
+  ].filter(Boolean) as string[];
   return (
     <div className={cn("rounded-xl border px-4 py-3", winner ? "border-gold/50 bg-gold/10" : "border-border bg-surface")}>
       <div className="flex items-center justify-between">
         <p className="font-hud text-xs font-bold tracking-wide flex items-center gap-1.5" style={{ color: accent }}>
           {PLAYERS[playerId].name.toUpperCase()}
-          {(isNewLapRecord || isNewRaceRecord) && (
+          {badgeLabels.length > 0 && (
             <span
               className="inline-flex items-center gap-1 rounded-full bg-gold/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-gold normal-case"
-              title={[isNewLapRecord && "New fastest lap for this circuit", isNewRaceRecord && "New fastest race for this circuit"].filter(Boolean).join(" — ")}
+              title={[
+                isNewLapRecord && "New fastest lap for this circuit",
+                isNewRaceRecord && "New fastest race for this circuit",
+                isNewSpeedTrap && "New all-time top speed for this circuit",
+              ].filter(Boolean).join(" — ")}
             >
               <Trophy className="h-2.5 w-2.5" />
-              {isNewLapRecord && isNewRaceRecord ? "New Lap + Race Record" : isNewLapRecord ? "New Lap Record" : "New Race Record"}
+              New {badgeLabels.join(" + ")}
             </span>
           )}
         </p>
@@ -201,6 +226,12 @@ function ResultCard({
           </p>
         ))}
       </div>
+      {topSpeed != null && (
+        <p className="flex justify-between text-xs text-text-faint mt-0.5 pt-0.5 border-t border-border">
+          <span>Speed Trap</span>
+          <span className="text-stat text-text-dim">{topSpeed.toFixed(1)}</span>
+        </p>
+      )}
     </div>
   );
 }
