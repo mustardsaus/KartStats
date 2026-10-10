@@ -1015,6 +1015,45 @@ def read_player_speed(player_idx: int):
     return read_float(player_sub10 + PLAYERHOLDER_SUB10_OFF_SPEED)
 
 
+def _mem_range_ok(addr):
+    """Loose plausibility check -- MEM1 or MEM2, same ranges find_itemhandler_addr
+    already trusts elsewhere in this file. Not a guarantee of correctness,
+    just enough to tell "this looks like a real pointer" from "this is
+    garbage/uninitialized/the wrong offset entirely"."""
+    return addr is not None and (0x80000000 <= addr < 0x81800000 or 0x90000000 <= addr < 0x94000000)
+
+
+def debug_player_chain(player_idx: int):
+    """DIAGNOSTIC -- same chain as read_player_speed, but returns every
+    intermediate hop (as an ordered dict, stopping at the first hop that
+    doesn't look like a real pointer) so a broken link shows exactly
+    where, instead of a single final number that could be garbage for
+    any of several different reasons."""
+    hops = {}
+    holder = read_ptr(PLAYERHOLDER_SINSTANCE_ADDR)
+    hops["holder"] = holder
+    if not _mem_range_ok(holder):
+        return hops
+    players = read_ptr(holder + PLAYERHOLDER_OFF_PLAYERS)
+    hops["players"] = players
+    if not _mem_range_ok(players):
+        return hops
+    player = read_ptr(players + player_idx * 4)
+    hops["player"] = player
+    if not _mem_range_ok(player):
+        return hops
+    player_sub = read_ptr(player + PLAYERHOLDER_PLAYER_OFF_SUB)
+    hops["player_sub"] = player_sub
+    if not _mem_range_ok(player_sub):
+        return hops
+    player_sub10 = read_ptr(player_sub + PLAYERHOLDER_SUB_OFF_SUB10)
+    hops["player_sub10"] = player_sub10
+    if not _mem_range_ok(player_sub10):
+        return hops
+    hops["speed"] = read_float(player_sub10 + PLAYERHOLDER_SUB10_OFF_SPEED)
+    return hops
+
+
 def read_player(player_addr: int):
     """Returns (position, currentLap, maxLap, stateFlags) or None."""
     try:
@@ -1681,12 +1720,19 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
             if SCAN_PLAYER_SPEED:
                 now = time.time()
                 if now >= next_speed_print:
-                    next_speed_print = now + 0.5
-                    speed0 = read_player_speed(0)
-                    speed1 = read_player_speed(1)
-                    fmt = lambda v: f"{v:.1f}" if v is not None else "?"
-                    print(f"[race {race_num}] speed (unvalidated, PlayerHolder chain) -- "
-                          f"idx 0: {fmt(speed0)} | idx 1: {fmt(speed1)}", flush=True)
+                    next_speed_print = now + 2.0
+                    for idx in (0, 1):
+                        hops = debug_player_chain(idx)
+                        parts = []
+                        for key in ("holder", "players", "player", "player_sub", "player_sub10"):
+                            if key not in hops:
+                                break
+                            v = hops[key]
+                            parts.append(f"{key}=0x{v:08X}" if v else f"{key}=NULL")
+                        if "speed" in hops:
+                            s = hops["speed"]
+                            parts.append(f"speed={s:.1f}" if s is not None else "speed=?")
+                        print(f"[race {race_num}] chain idx {idx} -- " + " -> ".join(parts), flush=True)
         other_last = other_last_new
 
         if SCAN_PLAYER_ITEM:
