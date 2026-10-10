@@ -46,6 +46,7 @@ Ctrl+C to stop.
 
 import argparse
 import os
+import struct
 import sys
 import time
 
@@ -292,6 +293,35 @@ DUMP_ALL_PLAYERS = bool(os.environ.get("MKW_DUMP_PLAYERS"))
 # gets matched against, no live marking required.
 PLAYER_ITEM_SCAN_SIZE = 0x200  # generous past the last documented field (stateFlags, 0x38)
 SCAN_PLAYER_ITEM = bool(os.environ.get("MKW_SCAN_PLAYER_ITEM"))
+
+# --- Live speed, step 1: PlayerHolder::sInstance + the PlayerSub10 chain --
+# DIAGNOSTIC ONLY (gated by MKW_SCAN_PLAYER_SPEED) -- nothing here sends
+# telemetry or touches the DB yet. These offsets have NOT been validated
+# against this project's own live Dolphin session; they're derived from
+# three independent sources that all agree with each other, which is a
+# good sign but not a substitute for watching the real numbers move:
+#   1. The documented retail struct layout (same community lineage as
+#      raceinfo.h above): PlayerHolder::sInstance, Player.playerSub,
+#      PlayerSub.playerSub10, and PlayerSub10.vehicleSpeed, with the
+#      doc's own neighboring-offset comments matching this byte math
+#      exactly at every anchor point checked.
+#   2. The Kinoko MKW physics reimplementation (independently
+#      reverse-engineered, open source) -- same field, same relative
+#      offset, derived from its own doc comments.
+#   3. SwareJonge/MKW-Dolphin-Speedometer, a published, working Dolphin
+#      speed-overlay tool, reads this exact offset for this exact
+#      purpose.
+# What's NOT yet known: which PlayerHolder array index (0 or 1) is which
+# on-screen player. The diagnostic print below labels both raw indices --
+# accelerate one controller alone during a test race and see which number
+# moves, the same "swap players" calibration already flagged as an open
+# item in the War Mode plan for slot assignment.
+PLAYERHOLDER_SINSTANCE_ADDR = 0x809C18F8  # PlayerHolder::sInstance (NTSC-U)
+PLAYERHOLDER_OFF_PLAYERS = 0x20           # Player** -- array of per-player pointers
+PLAYERHOLDER_PLAYER_OFF_SUB = 0x10        # Player.playerSub -> PlayerSub*
+PLAYERHOLDER_SUB_OFF_SUB10 = 0x10         # PlayerSub.playerSub10 -> PlayerSub10* ("move")
+PLAYERHOLDER_SUB10_OFF_SPEED = 0x20       # PlayerSub10.vehicleSpeed, f32, current speed
+SCAN_PLAYER_SPEED = bool(os.environ.get("MKW_SCAN_PLAYER_SPEED"))
 
 # --- Held item, step 2: ITEMHandler::sInstance, a documented static --------
 # Race 1's direct byte-level scan above ruled out every offset in the
@@ -953,6 +983,38 @@ def read_ptr(addr: int):
         return None
 
 
+def read_float(addr: int):
+    """Reads a big-endian f32 at addr, or None on a bad read."""
+    try:
+        return struct.unpack(">f", dme.read_bytes(addr, 4))[0]
+    except Exception:
+        return None
+
+
+def read_player_speed(player_idx: int):
+    """DIAGNOSTIC (see MKW_SCAN_PLAYER_SPEED above) -- chases
+    PlayerHolder::sInstance -> players[player_idx] -> playerSub ->
+    playerSub10 -> vehicleSpeed. Returns the raw float, or None if any
+    hop comes back null/unreadable: a broken hop just means no reading
+    this tick, never a guessed one."""
+    holder = read_ptr(PLAYERHOLDER_SINSTANCE_ADDR)
+    if not holder:
+        return None
+    players = read_ptr(holder + PLAYERHOLDER_OFF_PLAYERS)
+    if not players:
+        return None
+    player = read_ptr(players + player_idx * 4)
+    if not player:
+        return None
+    player_sub = read_ptr(player + PLAYERHOLDER_PLAYER_OFF_SUB)
+    if not player_sub:
+        return None
+    player_sub10 = read_ptr(player_sub + PLAYERHOLDER_SUB_OFF_SUB10)
+    if not player_sub10:
+        return None
+    return read_float(player_sub10 + PLAYERHOLDER_SUB10_OFF_SPEED)
+
+
 def read_player(player_addr: int):
     """Returns (position, currentLap, maxLap, stateFlags) or None."""
     try:
@@ -1507,6 +1569,7 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
     itemhandler_addr = None
     itemhandler_scan_done = False  # one attempt per race -- see the call site's comment
     prev_item_tail = {1: None, 2: None}  # slot -> last-seen item_tail, for pickup detection below
+    next_speed_print = 0.0  # throttles MKW_SCAN_PLAYER_SPEED's print to ~2/sec, not every tick
     ptr_tracked = {}  # source_offset -> {"target", "window", "history", "retargets"}
 
     other_addr = _find_other_player_addr(raceinfo_addr, player_addr)
@@ -1612,6 +1675,18 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
                               f"(lap {reading[1]}/{STANDARD_LAP_COUNT})", flush=True)
                         telemetry.send_item_received(race_num, slot, ts_ms, tail, reading[1])
                     prev_item_tail[slot] = tail
+
+            # Live speed: DIAGNOSTIC ONLY, see MKW_SCAN_PLAYER_SPEED above.
+            # Not wired into telemetry -- print and eyeball first.
+            if SCAN_PLAYER_SPEED:
+                now = time.time()
+                if now >= next_speed_print:
+                    next_speed_print = now + 0.5
+                    speed0 = read_player_speed(0)
+                    speed1 = read_player_speed(1)
+                    fmt = lambda v: f"{v:.1f}" if v is not None else "?"
+                    print(f"[race {race_num}] speed (unvalidated, PlayerHolder chain) -- "
+                          f"idx 0: {fmt(speed0)} | idx 1: {fmt(speed1)}", flush=True)
         other_last = other_last_new
 
         if SCAN_PLAYER_ITEM:
