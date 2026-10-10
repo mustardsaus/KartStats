@@ -1,4 +1,4 @@
-import type { BattleRound, Circuit, DisplayConfig, DriverId, PointsMapping, RawRace, RawSeason, RaceInput, RaceItemEvent, RacePositionSample, RacePowerup, RoundPowerup } from "@/lib/types";
+import type { BattleRound, Circuit, DisplayConfig, DriverId, PointsMapping, RawRace, RawSeason, RaceInput, RaceItemEvent, RacePositionSample, RacePowerup, RaceSpeedSample, RoundPowerup } from "@/lib/types";
 import type { StoredTelemetryEvent } from "@/lib/telemetry/events";
 import { RACES_PER_SEASON } from "@/lib/types";
 import { CIRCUITS } from "@/lib/data/circuits";
@@ -20,6 +20,7 @@ interface LocalState {
   liveTelemetryEvents: Map<string, StoredTelemetryEvent[]>; // keyed by `${seasonId}:${raceNumber}`
   racePositionSamples: RacePositionSample[];
   raceItemEvents: RaceItemEvent[];
+  raceSpeedSamples: RaceSpeedSample[];
 }
 
 function loadInitialState(): LocalState {
@@ -43,6 +44,7 @@ function loadInitialState(): LocalState {
     liveTelemetryEvents: new Map(),
     racePositionSamples: [],
     raceItemEvents: [],
+    raceSpeedSamples: [],
   };
 }
 
@@ -131,6 +133,8 @@ export const localStore: DataStore = {
       renLap2TimeMs: input.renLap2TimeMs ?? null,
       renLap3TimeMs: input.renLap3TimeMs ?? null,
       renFinalTimeMs: input.renFinalTimeMs ?? null,
+      adiTopSpeed: input.adiTopSpeed ?? null,
+      renTopSpeed: input.renTopSpeed ?? null,
       // Immersive only -- the season's auto-detected loadout, copied onto
       // every race (see lib/telemetry/finalize.ts).
       adiCharacter: input.adiCharacter ?? null,
@@ -491,6 +495,14 @@ export const localStore: DataStore = {
 
   async getRacePositionSamples(raceId) {
     return state.racePositionSamples.filter((s) => s.raceId === raceId);
+  },
+
+  async addRaceSpeedSamples(raceId, samples) {
+    state.raceSpeedSamples.push(...samples.map((s) => ({ ...s, raceId })));
+  },
+
+  async getRaceSpeedSamples(raceId) {
+    return state.raceSpeedSamples.filter((s) => s.raceId === raceId);
   },
 
   async addRaceItemEvents(raceId, events) {

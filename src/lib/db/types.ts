@@ -1,4 +1,4 @@
-import type { BattleRound, Circuit, DisplayConfig, DriverId, ItemId, PlayerId, PointsMapping, RaceInput, RaceItemEvent, RacePositionSample, RacePowerup, RawRace, RawSeason, RoundPowerup, TransmissionMode } from "@/lib/types";
+import type { BattleRound, Circuit, DisplayConfig, DriverId, ItemId, PlayerId, PointsMapping, RaceInput, RaceItemEvent, RacePositionSample, RacePowerup, RaceSpeedSample, RawRace, RawSeason, RoundPowerup, TransmissionMode } from "@/lib/types";
 import type { StoredTelemetryEvent } from "@/lib/telemetry/events";
 
 export interface ImportBatchResult {
@@ -214,6 +214,8 @@ export interface DataStore {
   getRacePositionSamples(raceId: string): Promise<RacePositionSample[]>;
   addRaceItemEvents(raceId: string, events: RaceItemEvent[]): Promise<void>;
   getRaceItemEvents(raceId: string): Promise<RaceItemEvent[]>;
+  addRaceSpeedSamples(raceId: string, samples: RaceSpeedSample[]): Promise<void>;
+  getRaceSpeedSamples(raceId: string): Promise<RaceSpeedSample[]>;
 
   /**
    * Writes aggregate item counts straight onto the finalized race — the

@@ -1,4 +1,4 @@
-import type { BattleRound, Circuit, DisplayConfig, DriverId, ItemId, PlayerId, PointsMapping, RawRace, RawSeason, RaceInput, RaceItemEvent, RacePositionSample, RacePowerup, RoundPowerup, TransmissionMode } from "@/lib/types";
+import type { BattleRound, Circuit, DisplayConfig, DriverId, ItemId, PlayerId, PointsMapping, RawRace, RawSeason, RaceInput, RaceItemEvent, RacePositionSample, RacePowerup, RaceSpeedSample, RoundPowerup, TransmissionMode } from "@/lib/types";
 import type { StoredTelemetryEvent } from "@/lib/telemetry/events";
 import { RACES_PER_SEASON } from "@/lib/types";
 import { PLAYERS } from "@/lib/data/points-mapping";
@@ -104,6 +104,8 @@ interface RaceRow {
   ren_lap2_time_ms?: number | null;
   ren_lap3_time_ms?: number | null;
   ren_final_time_ms?: number | null;
+  adi_top_speed?: number | null;
+  ren_top_speed?: number | null;
 }
 function rowToRace(r: RaceRow): RawRace {
   return {
@@ -132,6 +134,8 @@ function rowToRace(r: RaceRow): RawRace {
     renLap2TimeMs: r.ren_lap2_time_ms ?? null,
     renLap3TimeMs: r.ren_lap3_time_ms ?? null,
     renFinalTimeMs: r.ren_final_time_ms ?? null,
+    adiTopSpeed: r.adi_top_speed ?? null,
+    renTopSpeed: r.ren_top_speed ?? null,
   };
 }
 
@@ -232,6 +236,16 @@ interface RaceItemEventRow {
 }
 function rowToRaceItemEvent(r: RaceItemEventRow): RaceItemEvent {
   return { raceId: r.race_id, playerId: r.player_id, tsMs: r.ts_ms, itemId: r.item_id, lap: r.lap };
+}
+
+interface RaceSpeedSampleRow {
+  race_id: string;
+  player_id: PlayerId;
+  ts_ms: number;
+  speed: number;
+}
+function rowToRaceSpeedSample(r: RaceSpeedSampleRow): RaceSpeedSample {
+  return { raceId: r.race_id, playerId: r.player_id, tsMs: r.ts_ms, speed: r.speed };
 }
 
 export const supabaseStore: DataStore = {
@@ -354,6 +368,8 @@ export const supabaseStore: DataStore = {
         ren_lap2_time_ms: input.renLap2TimeMs ?? null,
         ren_lap3_time_ms: input.renLap3TimeMs ?? null,
         ren_final_time_ms: input.renFinalTimeMs ?? null,
+        adi_top_speed: input.adiTopSpeed ?? null,
+        ren_top_speed: input.renTopSpeed ?? null,
         // Immersive only -- the season's auto-detected loadout, copied
         // onto every race (see lib/telemetry/finalize.ts). undefined on
         // every Manual/Battle RaceInput, so these columns stay whatever
@@ -897,6 +913,26 @@ export const supabaseStore: DataStore = {
       .order("ts_ms");
     if (error) throw error;
     return (data as RacePositionSampleRow[]).map(rowToRacePositionSample);
+  },
+
+  async addRaceSpeedSamples(raceId: string, samples: RaceSpeedSample[]) {
+    if (samples.length === 0) return;
+    const supabase = getSupabaseServerClient();
+    const { error } = await supabase.from("race_speed_samples").insert(
+      samples.map((s) => ({ race_id: raceId, player_id: s.playerId, ts_ms: s.tsMs, speed: s.speed }))
+    );
+    if (error) throw error;
+  },
+
+  async getRaceSpeedSamples(raceId: string) {
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("race_speed_samples")
+      .select("*")
+      .eq("race_id", raceId)
+      .order("ts_ms");
+    if (error) throw error;
+    return (data as RaceSpeedSampleRow[]).map(rowToRaceSpeedSample);
   },
 
   async addRaceItemEvents(raceId: string, events: RaceItemEvent[]) {

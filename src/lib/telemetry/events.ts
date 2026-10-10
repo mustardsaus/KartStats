@@ -19,6 +19,14 @@
  * Dolphin tracker's own project history has had off-by-one lap/race-number
  * bugs, so this project's convention is to enforce it at the one real
  * ingestion choke point instead.
+ *
+ * speed-update's `speed` is the raw PlayerSub10.vehicleSpeed reading the
+ * Python side's structural scan finds (see auto_track_race.py's
+ * PLAYERSUB10_OFF_VEHICLE_SPEED) -- not km/h or any other real-world
+ * unit, since no conversion factor has been confirmed. It's the same raw
+ * unit on every race though, so finalize.ts's max() per race (the speed
+ * trap) and circuit-records.ts's across-races/circuits comparisons are
+ * both meaningful.
  */
 
 import type { ItemId, PlayerId, RawSeason } from "@/lib/types";
@@ -37,6 +45,7 @@ export type TelemetryEvent =
   | (TelemetryEventBase & { type: "position-update"; slot: TelemetrySlot; position: number; lap: number })
   | (TelemetryEventBase & { type: "lap-complete"; slot: TelemetrySlot; lap: number; lapTimeMs: number })
   | (TelemetryEventBase & { type: "item-received"; slot: TelemetrySlot; itemId: ItemId; lap: number })
+  | (TelemetryEventBase & { type: "speed-update"; slot: TelemetrySlot; speed: number })
   | (TelemetryEventBase & { type: "race-finished"; slot: TelemetrySlot; finalPosition: number; finalTimeMs: number | null }); // null = never crossed the line (race ended for everyone first), e.g. last place
 
 export interface TelemetryEventBatch {
@@ -49,6 +58,7 @@ export type StoredTelemetryEvent =
   | (TelemetryEventBase & { type: "position-update"; playerId: PlayerId; position: number; lap: number })
   | (TelemetryEventBase & { type: "lap-complete"; playerId: PlayerId; lap: number; lapTimeMs: number })
   | (TelemetryEventBase & { type: "item-received"; playerId: PlayerId; itemId: ItemId; lap: number })
+  | (TelemetryEventBase & { type: "speed-update"; playerId: PlayerId; speed: number })
   | (TelemetryEventBase & { type: "race-finished"; playerId: PlayerId; finalPosition: number; finalTimeMs: number | null }); // null = never crossed the line (race ended for everyone first), e.g. last place
 
 /** Drops any lap-0 split -- see module doc above. The single choke point for this rule. */

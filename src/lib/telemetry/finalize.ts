@@ -13,7 +13,7 @@
  */
 
 import { getStore } from "@/lib/db";
-import type { ItemId, PlayerId, RaceInput, RaceItemEvent, RacePositionSample, RacePowerup } from "@/lib/types";
+import type { ItemId, PlayerId, RaceInput, RaceItemEvent, RacePositionSample, RacePowerup, RaceSpeedSample } from "@/lib/types";
 import type { StoredTelemetryEvent } from "./events";
 
 export interface FinalizeResult {
@@ -29,12 +29,21 @@ type CircuitDetectedEvent = Extract<StoredTelemetryEvent, { type: "circuit-detec
 type PositionUpdateEvent = Extract<StoredTelemetryEvent, { type: "position-update" }>;
 type LoadoutDetectedEvent = Extract<StoredTelemetryEvent, { type: "loadout-detected" }>;
 type ItemReceivedEvent = Extract<StoredTelemetryEvent, { type: "item-received" }>;
+type SpeedUpdateEvent = Extract<StoredTelemetryEvent, { type: "speed-update" }>;
 
 function lapTimeMs(events: StoredTelemetryEvent[], playerId: PlayerId, lap: 1 | 2 | 3): number | null {
   const match = events.find(
     (e): e is LapCompleteEvent => e.type === "lap-complete" && e.playerId === playerId && e.lap === lap
   );
   return match?.lapTimeMs ?? null;
+}
+
+/** This race's top speed for one player -- the "speed trap" -- or null if no speed-update events landed (auto-identification failed that attempt, or the race predates speed tracking). */
+function topSpeed(events: StoredTelemetryEvent[], playerId: PlayerId): number | null {
+  const speeds = events
+    .filter((e): e is SpeedUpdateEvent => e.type === "speed-update" && e.playerId === playerId)
+    .map((e) => e.speed);
+  return speeds.length > 0 ? Math.max(...speeds) : null;
 }
 
 export async function maybeFinalizeImmersiveRace(
@@ -114,6 +123,8 @@ export async function maybeFinalizeImmersiveRace(
     renLap2TimeMs: lapTimeMs(events, "ren", 2),
     renLap3TimeMs: lapTimeMs(events, "ren", 3),
     renFinalTimeMs: renFinish.finalTimeMs ?? null,
+    adiTopSpeed: topSpeed(events, "adi"),
+    renTopSpeed: topSpeed(events, "ren"),
     adiCharacter,
     adiKart,
     renCharacter,
@@ -126,6 +137,11 @@ export async function maybeFinalizeImmersiveRace(
     .filter((e): e is PositionUpdateEvent => e.type === "position-update")
     .map((e) => ({ raceId: race.id, playerId: e.playerId, tsMs: e.tsMs, position: e.position, lap: e.lap }));
   if (positionSamples.length > 0) await store.addRacePositionSamples(race.id, positionSamples);
+
+  const speedSamples: RaceSpeedSample[] = events
+    .filter((e): e is SpeedUpdateEvent => e.type === "speed-update")
+    .map((e) => ({ raceId: race.id, playerId: e.playerId, tsMs: e.tsMs, speed: e.speed }));
+  if (speedSamples.length > 0) await store.addRaceSpeedSamples(race.id, speedSamples);
 
   const itemEventRows: RaceItemEvent[] = events
     .filter((e): e is ItemReceivedEvent => e.type === "item-received")

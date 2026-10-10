@@ -123,6 +123,20 @@ export interface RawRace {
   renLap2TimeMs?: number | null;
   renLap3TimeMs?: number | null;
   renFinalTimeMs?: number | null;
+  /**
+   * Immersive only -- each player's top speed this race (the "speed
+   * trap"), captured live by the Dolphin telemetry bridge and computed
+   * once at finalize as the max of that race's speed-update samples (see
+   * lib/telemetry/finalize.ts). Raw PlayerSub10.vehicleSpeed units, not
+   * km/h -- see the module doc in lib/telemetry/events.ts. Always null
+   * for Manual and Battle Mode races, and for any Immersive race where
+   * the speed addresses couldn't be auto-identified that attempt -- never
+   * fabricated. Circuit Records (lib/stats/circuit-records.ts) is the
+   * only consumer of the ACROSS-RACES comparison; within one race, this
+   * is also shown directly on the result panel.
+   */
+  adiTopSpeed?: number | null;
+  renTopSpeed?: number | null;
 }
 
 /**
@@ -318,6 +332,9 @@ export interface RaceInput {
   renLap2TimeMs?: number | null;
   renLap3TimeMs?: number | null;
   renFinalTimeMs?: number | null;
+  /** Immersive only -- see the matching fields on RawRace above. */
+  adiTopSpeed?: number | null;
+  renTopSpeed?: number | null;
   /**
    * Immersive only -- the season's locked-in loadout (detected once from
    * race 1, see lib/telemetry/finalize.ts), copied onto every race as it
@@ -360,4 +377,17 @@ export interface RaceItemEvent {
   tsMs: number;
   itemId: ItemId;
   lap: number;
+}
+
+/**
+ * One timestamped speed reading for one player, during one race. Powers
+ * the Season Rewind speed-vs-time graph (lib/stats/circuit-records.ts'
+ * speed trap and RawRace.adi/renTopSpeed are both derived from these at
+ * finalize time, not from a separately-tracked running max).
+ */
+export interface RaceSpeedSample {
+  raceId: string;
+  playerId: PlayerId;
+  tsMs: number;
+  speed: number; // raw PlayerSub10.vehicleSpeed units -- see lib/telemetry/events.ts module doc
 }

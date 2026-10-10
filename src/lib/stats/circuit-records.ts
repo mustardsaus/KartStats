@@ -17,6 +17,16 @@ import type { PlayerId, RawRace } from "@/lib/types";
  * dropLapZeroEvents in lib/telemetry/events.ts) long before a race ever
  * becomes a RawRace row, so there is nothing to filter here -- lap1/2/3
  * on a RawRace are always real laps.
+ *
+ * speedTrap is a third, independent record: the fastest speed ANY
+ * player has ever hit on this circuit, in any season -- a running
+ * measure, not tied to a particular race's finishing position or lap
+ * time (so holding the Fastest Lap or Race Record does not imply
+ * holding the speed trap, or vice versa, same independence the lap/race
+ * records already have from each other). Built from RawRace's
+ * adi/renTopSpeed, which are themselves already a per-race max (see
+ * lib/telemetry/finalize.ts) -- raw PlayerSub10.vehicleSpeed units, not
+ * km/h or any real-world unit (lib/telemetry/events.ts module doc).
  */
 
 export interface FastestLapRecord {
@@ -34,10 +44,18 @@ export interface RaceTimeRecord {
   seasonId: string;
 }
 
+export interface SpeedTrapRecord {
+  playerId: PlayerId;
+  speed: number;
+  raceNumber: number;
+  seasonId: string;
+}
+
 export interface CircuitRecord {
   circuitId: string;
   fastestLap: FastestLapRecord | null;
   raceRecord: RaceTimeRecord | null;
+  speedTrap: SpeedTrapRecord | null;
 }
 
 const PLAYER_IDS: PlayerId[] = ["adi", "ren"];
@@ -53,12 +71,24 @@ function finalTimeMs(race: RawRace, playerId: PlayerId): number | null | undefin
   return race[key] as number | null | undefined;
 }
 
+function topSpeed(race: RawRace, playerId: PlayerId): number | null | undefined {
+  const key = `${playerId}TopSpeed` as keyof RawRace;
+  return race[key] as number | null | undefined;
+}
+
 function considerLap(current: FastestLapRecord | null, candidate: FastestLapRecord): FastestLapRecord {
   return !current || candidate.lapTimeMs < current.lapTimeMs ? candidate : current;
 }
 
 function considerRaceTime(current: RaceTimeRecord | null, candidate: RaceTimeRecord): RaceTimeRecord {
   return !current || candidate.finalTimeMs < current.finalTimeMs ? candidate : current;
+}
+
+// Higher is better here, unlike the two time-based records above -- same
+// "current wins unless candidate is STRICTLY better" tie-break
+// direction, just flipped for a measure where more is better.
+function considerSpeedTrap(current: SpeedTrapRecord | null, candidate: SpeedTrapRecord): SpeedTrapRecord {
+  return !current || candidate.speed > current.speed ? candidate : current;
 }
 
 /**
@@ -74,7 +104,7 @@ export function buildCircuitRecords(races: RawRace[]): Map<string, CircuitRecord
   for (const race of races) {
     let entry = records.get(race.circuitId);
     if (!entry) {
-      entry = { circuitId: race.circuitId, fastestLap: null, raceRecord: null };
+      entry = { circuitId: race.circuitId, fastestLap: null, raceRecord: null, speedTrap: null };
       records.set(race.circuitId, entry);
     }
 
@@ -92,10 +122,20 @@ export function buildCircuitRecords(races: RawRace[]): Map<string, CircuitRecord
       }
 
       const finalMs = finalTimeMs(race, playerId);
-      if (finalMs == null) continue;
-      entry.raceRecord = considerRaceTime(entry.raceRecord, {
+      if (finalMs != null) {
+        entry.raceRecord = considerRaceTime(entry.raceRecord, {
+          playerId,
+          finalTimeMs: finalMs,
+          raceNumber: race.raceNumber,
+          seasonId: race.seasonId,
+        });
+      }
+
+      const speed = topSpeed(race, playerId);
+      if (speed == null) continue;
+      entry.speedTrap = considerSpeedTrap(entry.speedTrap, {
         playerId,
-        finalTimeMs: finalMs,
+        speed,
         raceNumber: race.raceNumber,
         seasonId: race.seasonId,
       });
