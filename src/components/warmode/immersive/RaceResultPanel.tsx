@@ -10,8 +10,9 @@ import { CharacterIcon } from "../battle/CharacterIcon";
 import { VehicleIcon } from "../battle/VehicleIcon";
 import { CHARACTERS_BY_ID } from "@/lib/data/characters";
 import { VEHICLES_BY_ID } from "@/lib/data/karts";
-import { Flag, Loader2 } from "lucide-react";
+import { Flag, Loader2, Trophy } from "lucide-react";
 import { cn, formatRaceTimeMs as formatTime } from "@/lib/utils";
+import type { CircuitRecord } from "@/lib/stats/circuit-records";
 
 /**
  * Shown the instant an Immersive race finalizes, and kept showing until
@@ -20,7 +21,15 @@ import { cn, formatRaceTimeMs as formatTime } from "@/lib/utils";
  * never live-updated, per the simplified spec: no incremental graph
  * drawing mid-race, just a static result the moment the race is over.
  */
-export function RaceResultPanel({ race, circuitName }: { race: RawRace; circuitName: string }) {
+export function RaceResultPanel({
+  race,
+  circuitName,
+  circuitRecord,
+}: {
+  race: RawRace;
+  circuitName: string;
+  circuitRecord: CircuitRecord | null;
+}) {
   const [detail, setDetail] = useState<{ positionSamples: RacePositionSample[]; itemEvents: RaceItemEvent[] } | null>(null);
 
   // No reset-on-change here -- the parent mounts this with key={race.id}
@@ -52,21 +61,27 @@ export function RaceResultPanel({ race, circuitName }: { race: RawRace; circuitN
       <div className="grid grid-cols-2 gap-3 mb-5">
         <ResultCard
           playerId="adi"
+          raceNumber={race.raceNumber}
+          seasonId={race.seasonId}
           position={race.adiFinishingPosition}
           finalMs={race.adiFinalTimeMs}
           laps={[race.adiLap1TimeMs, race.adiLap2TimeMs, race.adiLap3TimeMs]}
           characterId={race.adiCharacter}
           kartId={race.adiKart}
           winner={winner === "adi"}
+          circuitRecord={circuitRecord}
         />
         <ResultCard
           playerId="ren"
+          raceNumber={race.raceNumber}
+          seasonId={race.seasonId}
           position={race.renFinishingPosition}
           finalMs={race.renFinalTimeMs}
           laps={[race.renLap1TimeMs, race.renLap2TimeMs, race.renLap3TimeMs]}
           characterId={race.renCharacter}
           kartId={race.renKart}
           winner={winner === "ren"}
+          circuitRecord={circuitRecord}
         />
       </div>
 
@@ -89,20 +104,26 @@ export function RaceResultPanel({ race, circuitName }: { race: RawRace; circuitN
 
 function ResultCard({
   playerId,
+  raceNumber,
+  seasonId,
   position,
   finalMs,
   laps,
   characterId,
   kartId,
   winner,
+  circuitRecord,
 }: {
   playerId: PlayerId;
+  raceNumber: number;
+  seasonId: string;
   position: number;
   finalMs: number | null | undefined;
   laps: Array<number | null | undefined>;
   characterId: string | null | undefined;
   kartId: string | null | undefined;
   winner: boolean;
+  circuitRecord: CircuitRecord | null;
 }) {
   const accent = playerId === "adi" ? "var(--color-adi)" : "var(--color-ren)";
   // No final time = never crossed the line: the race ends for everyone once
@@ -117,11 +138,36 @@ function ResultCard({
   // "never store what's derivable" rule, and null (not a stale number)
   // whenever a lap split is missing, same as a DNF.
   const totalRaceTimeMs = laps.every((ms) => ms != null) ? laps.reduce((sum, ms) => sum + (ms as number), 0) : null;
+  // "This race/player is the one the record currently points to" -- works
+  // whether circuitRecord was built with or without this race folded in,
+  // since buildCircuitRecords breaks ties in favor of whichever race it
+  // saw first, so an exact tie with an EARLIER race never falsely flags
+  // here. Matched by raceNumber+seasonId+playerId, not just a time
+  // comparison, so a merely-equal (not better) time never lights this up.
+  const isNewLapRecord =
+    circuitRecord?.fastestLap != null &&
+    circuitRecord.fastestLap.playerId === playerId &&
+    circuitRecord.fastestLap.raceNumber === raceNumber &&
+    circuitRecord.fastestLap.seasonId === seasonId;
+  const isNewRaceRecord =
+    circuitRecord?.raceRecord != null &&
+    circuitRecord.raceRecord.playerId === playerId &&
+    circuitRecord.raceRecord.raceNumber === raceNumber &&
+    circuitRecord.raceRecord.seasonId === seasonId;
   return (
     <div className={cn("rounded-xl border px-4 py-3", winner ? "border-gold/50 bg-gold/10" : "border-border bg-surface")}>
       <div className="flex items-center justify-between">
-        <p className="font-hud text-xs font-bold tracking-wide" style={{ color: accent }}>
+        <p className="font-hud text-xs font-bold tracking-wide flex items-center gap-1.5" style={{ color: accent }}>
           {PLAYERS[playerId].name.toUpperCase()}
+          {(isNewLapRecord || isNewRaceRecord) && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-gold/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-gold normal-case"
+              title={[isNewLapRecord && "New fastest lap for this circuit", isNewRaceRecord && "New fastest race for this circuit"].filter(Boolean).join(" — ")}
+            >
+              <Trophy className="h-2.5 w-2.5" />
+              {isNewLapRecord && isNewRaceRecord ? "New Lap + Race Record" : isNewLapRecord ? "New Lap Record" : "New Race Record"}
+            </span>
+          )}
         </p>
         {characterId && kartId && (
           <div className="flex items-center -space-x-1.5">

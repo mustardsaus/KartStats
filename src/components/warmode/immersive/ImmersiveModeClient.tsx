@@ -171,6 +171,18 @@ export function ImmersiveModeClient({
     return getCircuitRecord(buildCircuitRecords([...historicalRaces, ...races]), currentCircuit.id);
   }, [currentCircuit, historicalSeasons, historicalRacesBySeasonId, races]);
 
+  // Same derivation, but keyed off justFinishedRace's circuit instead of
+  // currentCircuit (which is already null by the time a race has just
+  // finished -- the next one hasn't been detected yet). races already
+  // includes justFinishedRace itself by this point, so a record that
+  // matches ITS raceNumber/seasonId/playerId means this race just set it --
+  // see the "new record" badge in RaceResultPanel/ResultCard.
+  const justFinishedCircuitRecord = useMemo(() => {
+    if (!justFinishedRace) return null;
+    const historicalRaces = historicalSeasons.flatMap((s) => historicalRacesBySeasonId.get(s.id) ?? []);
+    return getCircuitRecord(buildCircuitRecords([...historicalRaces, ...races]), justFinishedRace.circuitId);
+  }, [justFinishedRace, historicalSeasons, historicalRacesBySeasonId, races]);
+
   if (season.isComplete && season.winnerId) {
     return (
       <SeasonCompletionScreen
@@ -223,6 +235,7 @@ export function ImmersiveModeClient({
           key={justFinishedRace.id}
           race={justFinishedRace}
           circuitName={circuitsById.get(justFinishedRace.circuitId)?.name ?? "Unknown circuit"}
+          circuitRecord={justFinishedCircuitRecord}
         />
       ) : currentCircuit ? (
         <div className="space-y-5">
