@@ -216,6 +216,19 @@ class TelemetryBridge:
             {"type": "item-received", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": ts_ms, "slot": slot, "itemId": item_slug, "lap": lap}
         )
 
+    def send_speed_update(self, race_number: int, slot: int, ts_ms: int, speed: float):
+        """Queued into the end-of-race batch like send_item_received --
+        nothing in KartStats shows live speed today either. `speed` is
+        the raw PlayerSub10.vehicleSpeed reading auto_track_race.py's
+        structural scan finds (see PLAYERSUB10_OFF_VEHICLE_SPEED there) --
+        not km/h or any other real-world unit, since no conversion
+        factor has been confirmed. It's the same raw unit on every race
+        though, so max() within a race (the speed trap) and comparisons
+        across races/circuits are both meaningful on KartStats' side."""
+        self._queue(
+            {"type": "speed-update", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": ts_ms, "slot": slot, "speed": round(speed, 2)}
+        )
+
     def poll_slot(self, race_number: int, ts_ms: int, slot: int, reading, finishing: bool):
         """`reading` is (position, lap, maxlap, flags) from read_player(),
         or None if unreadable this tick. Records position changes, lap

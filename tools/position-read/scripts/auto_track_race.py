@@ -372,6 +372,22 @@ SCAN_PLAYER_SPEED = bool(os.environ.get("MKW_SCAN_PLAYER_SPEED"))
 PLAYERSUB10_LIVENESS_WINDOW = 6       # samples to collect before judging (~3s at 0.5s/tick)
 PLAYERSUB10_LIVENESS_EPSILON = 0.5    # min (max-min) speed swing over the window to count as "live"
 
+# Player 1 vs player 2, once liveness narrows the field to the real
+# per-kart objects: confirmed across three separate live sessions (each
+# with a deliberate "hold one controller still" test, cross-checked
+# against the existing raceinfo-based "player 1"/"player 2" labels this
+# script already prints) that the LOWEST two addresses in the live set
+# are always the two human players, in slot order -- lowest = player 1,
+# second-lowest = player 2. CPU racers fill out the rest of the live set
+# at higher addresses every time. This is an empirical rule, not a
+# derived-from-structure guarantee (we don't know WHY humans land lowest
+# -- maybe slot-0/1 allocation order, maybe something else), so if a
+# future race ever looks wrong (an obviously CPU-like trace -- doesn't
+# track the on-screen "player 1 overtakes"-style log lines -- on one of
+# the two chosen addresses), that's a sign this needs another look, not
+# something to patch around silently.
+PLAYERSUB10_SLOT_BY_ADDRESS_ORDER = True
+
 # --- Held item, step 2: ITEMHandler::sInstance, a documented static --------
 # Race 1's direct byte-level scan above ruled out every offset in the
 # player struct window itself: offsets spaced 0xC4 apart cycling through
@@ -1767,6 +1783,7 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
     playersub10_scan_done = False
     playersub10_history = {}       # addr -> list of recent vehicleSpeed readings, for the liveness filter
     playersub10_live_addrs = None  # narrowed subset of playersub10_addrs once PLAYERSUB10_LIVENESS_WINDOW samples are in
+    playersub10_slot_addrs = None  # {1: addr, 2: addr} once auto-identified -- see PLAYERSUB10_SLOT_BY_ADDRESS_ORDER below
     ptr_tracked = {}  # source_offset -> {"target", "window", "history", "retargets"}
 
     other_addr = _find_other_player_addr(raceinfo_addr, player_addr)
@@ -1925,12 +1942,49 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
                             flush=True,
                         )
 
+                        # Auto-identify player 1/2 by address order -- see
+                        # PLAYERSUB10_SLOT_BY_ADDRESS_ORDER's comment above
+                        # for why this is trusted. Only commits to it with
+                        # >=2 live candidates; a 0/1-candidate race (scan
+                        # failed, or only one player was actually driving
+                        # this attempt) sends no speed telemetry at all
+                        # rather than guessing which lone address is which
+                        # player.
+                        if PLAYERSUB10_SLOT_BY_ADDRESS_ORDER and len(live) >= 2:
+                            ordered = sorted(live)
+                            playersub10_slot_addrs = {1: ordered[0], 2: ordered[1]}
+                            print(
+                                f"  auto-identified by address order: player 1 = 0x{playersub10_slot_addrs[1]:08X}, "
+                                f"player 2 = 0x{playersub10_slot_addrs[2]:08X}"
+                                + (f" ({len(live) - 2} CPU racer(s) also live, excluded)" if len(live) > 2 else ""),
+                                flush=True,
+                            )
+                        else:
+                            print(f"  can't auto-identify both players from {len(live)} live candidate(s) -- no speed telemetry sent this race", flush=True)
+
+                    # Send to KartStats: only the two auto-identified
+                    # addresses, never the raw candidate list -- an
+                    # unidentified race (playersub10_slot_addrs still
+                    # None) sends nothing rather than guessing. Queued
+                    # into the end-of-race batch like item-received, not
+                    # posted immediately -- nothing shows live speed yet.
+                    if playersub10_slot_addrs is not None:
+                        for slot, addr in playersub10_slot_addrs.items():
+                            s = readings.get(addr)
+                            if s is not None:
+                                telemetry.send_speed_update(race_num, slot, ts_ms, s)
+
                     show_addrs = playersub10_live_addrs if playersub10_live_addrs is not None else playersub10_addrs
+                    prefix = ""
+                    if playersub10_slot_addrs is not None:
+                        p1 = readings.get(playersub10_slot_addrs[1])
+                        p2 = readings.get(playersub10_slot_addrs[2])
+                        prefix = f"P1: {p1:.1f} | P2: {p2:.1f} || " if p1 is not None and p2 is not None else ""
                     parts = [
                         f"0x{a:08X}: {readings[a]:.1f}" if readings.get(a) is not None else f"0x{a:08X}: ?"
                         for a in show_addrs
                     ]
-                    print(f"[race {race_num}] speed (structural scan) -- " + " | ".join(parts), flush=True)
+                    print(f"[race {race_num}] speed (structural scan) -- " + prefix + " | ".join(parts), flush=True)
         other_last = other_last_new
 
         if SCAN_PLAYER_ITEM:
