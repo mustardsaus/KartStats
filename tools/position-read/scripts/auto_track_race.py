@@ -316,11 +316,45 @@ SCAN_PLAYER_ITEM = bool(os.environ.get("MKW_SCAN_PLAYER_ITEM"))
 # accelerate one controller alone during a test race and see which number
 # moves, the same "swap players" calibration already flagged as an open
 # item in the War Mode plan for slot assignment.
-PLAYERHOLDER_SINSTANCE_ADDR = 0x809C18F8  # PlayerHolder::sInstance (NTSC-U)
-PLAYERHOLDER_OFF_PLAYERS = 0x20           # Player** -- array of per-player pointers
+#
+# UPDATE after live testing: PLAYERHOLDER_SINSTANCE_ADDR did NOT check
+# out -- reading it live produced a small, steadily-climbing value
+# (0x00020006, then 0x00030006, ...), the signature of a counter/timer,
+# not a pointer. So this specific documented address is wrong for this
+# game build, even though it came from a normally-reliable community doc
+# (the same lineage as raceinfo.h above, which HAS checked out). Rather
+# than guess another address (exactly what this project keeps learning
+# not to do -- see ITEMHANDLER_SINSTANCE_ADDR's and SINSTANCE_ADDR's own
+# "UPDATE after live testing" comments), PLAYERSUB10_OFF_* below are kept
+# (struct-internal field order is far more stable across game revisions
+# than a specific global pointer slot, and three independent sources
+# agreed on them, including two explicit "unknown float 0x1c"/"0x28"
+# anchor comments in the retail struct doc that match this byte math
+# exactly), but the chain to REACH a PlayerSub10 object is replaced with
+# a structural scan of PlayerSub10's own content -- same technique
+# find_itemhandler_candidates() already uses successfully, just fingerprinting
+# a different struct's fields instead of chasing a wrong pointer to it.
+PLAYERHOLDER_SINSTANCE_ADDR = 0x809C18F8  # PlayerHolder::sInstance (NTSC-U) -- did NOT check out, kept only as a comment/paper trail
+PLAYERHOLDER_OFF_PLAYERS = 0x20           # Player** -- array of per-player pointers (unreachable without the above)
 PLAYERHOLDER_PLAYER_OFF_SUB = 0x10        # Player.playerSub -> PlayerSub*
 PLAYERHOLDER_SUB_OFF_SUB10 = 0x10         # PlayerSub.playerSub10 -> PlayerSub10* ("move")
 PLAYERHOLDER_SUB10_OFF_SPEED = 0x20       # PlayerSub10.vehicleSpeed, f32, current speed
+
+# --- PlayerSub10 structural scan (bypasses the broken chain above) -------
+# Fields relative to a PlayerSub10 object's own base address, all f32,
+# per the documented retail struct (two explicit offset-anchor comments
+# -- "unknown float 0x1c" and "unknown float 0x28, maybe last speed" --
+# land exactly on this byte math, independently cross-checked against
+# the Kinoko reimplementation's own doc comments):
+PLAYERSUB10_OFF_SPEED_MULTIPLIER = 0x10  # 50cc=0.8, 100cc=0.9, 150cc=1.0
+PLAYERSUB10_OFF_BASE_SPEED = 0x14
+PLAYERSUB10_OFF_SOFT_SPEED_LIMIT = 0x18
+PLAYERSUB10_OFF_VEHICLE_SPEED = 0x20     # same field read_player_speed/debug_player_chain already targeted
+PLAYERSUB10_OFF_LAST_SPEED = 0x24
+PLAYERSUB10_OFF_HARD_SPEED_LIMIT = 0x2C  # the anchor: always exactly 120.0, or 140.0 in a Bullet Bill
+PLAYERSUB10_SCAN_BLOCK_SIZE = 0x30       # through hardSpeedLimit -- acceleration/beyond not needed for the fingerprint
+HARD_SPEED_LIMITS = (120.0, 140.0)
+HARD_SPEED_LIMIT_TOL = 0.01
 SCAN_PLAYER_SPEED = bool(os.environ.get("MKW_SCAN_PLAYER_SPEED"))
 
 # --- Held item, step 2: ITEMHandler::sInstance, a documented static --------
@@ -719,6 +753,111 @@ def _read_u32_field(arr, offset, n):
 
 def _read_u8_field(arr, offset, n):
     return arr[offset : offset + 4 * n : 4]
+
+
+def _read_f32_field(arr, offset, n):
+    """Same vectorized 4-byte-aligned-candidate windowing as
+    _read_u32_field, reinterpreted as big-endian f32 -- _read_u32_field
+    already reassembles the bytes MSB-first into a native uint32, so
+    .view(np.float32) on that gives the correct float bit pattern
+    regardless of the host machine's own endianness."""
+    return _read_u32_field(arr, offset, n).view(np.float32)
+
+
+def _playersub10_shape_ok(addr: int) -> bool:
+    """Single-address version of scan_region_for_playersub10's fingerprint,
+    for verifying one already-found candidate (mirrors
+    _itemhandler_shape_ok's role for ITEMHandler)."""
+    try:
+        buf = dme.read_bytes(addr, PLAYERSUB10_SCAN_BLOCK_SIZE)
+    except Exception:
+        return False
+    speed_mult = struct.unpack(">f", buf[PLAYERSUB10_OFF_SPEED_MULTIPLIER:PLAYERSUB10_OFF_SPEED_MULTIPLIER + 4])[0]
+    base_speed = struct.unpack(">f", buf[PLAYERSUB10_OFF_BASE_SPEED:PLAYERSUB10_OFF_BASE_SPEED + 4])[0]
+    soft_limit = struct.unpack(">f", buf[PLAYERSUB10_OFF_SOFT_SPEED_LIMIT:PLAYERSUB10_OFF_SOFT_SPEED_LIMIT + 4])[0]
+    speed = struct.unpack(">f", buf[PLAYERSUB10_OFF_VEHICLE_SPEED:PLAYERSUB10_OFF_VEHICLE_SPEED + 4])[0]
+    last_speed = struct.unpack(">f", buf[PLAYERSUB10_OFF_LAST_SPEED:PLAYERSUB10_OFF_LAST_SPEED + 4])[0]
+    hard_limit = struct.unpack(">f", buf[PLAYERSUB10_OFF_HARD_SPEED_LIMIT:PLAYERSUB10_OFF_HARD_SPEED_LIMIT + 4])[0]
+    if not any(abs(hard_limit - h) <= HARD_SPEED_LIMIT_TOL for h in HARD_SPEED_LIMITS):
+        return False
+    if not (0.7 <= speed_mult <= 1.05):
+        return False
+    if not (0.0 < base_speed <= hard_limit + 1.0):
+        return False
+    if not (base_speed - 1.0 <= soft_limit <= hard_limit + 1.0):
+        return False
+    if not (-1.0 <= speed <= hard_limit + 1.0):
+        return False
+    if abs(speed - last_speed) > 15.0:  # one frame's worth of change, generous for a wall hit
+        return False
+    return True
+
+
+def scan_region_for_playersub10(start: int, end: int):
+    """One vectorized pass over [start, end) for 4-byte-aligned addresses
+    whose next PLAYERSUB10_SCAN_BLOCK_SIZE bytes have PlayerSub10's
+    documented shape. hardSpeedLimit landing within HARD_SPEED_LIMIT_TOL
+    of exactly 120.0 (or 140.0) is the real anchor here -- a random
+    4-byte sequence landing that close to a specific float by chance is
+    astronomically unlikely, and it has to hold at the same time as four
+    more independent range/relationship checks below."""
+    size = end - start
+    try:
+        buf = dme.read_bytes(start, size)
+    except Exception as exc:
+        print(f"  (couldn't read 0x{start:08X}-0x{end:08X}: {exc})")
+        return [], 0
+
+    arr = np.frombuffer(buf, dtype=np.uint8)
+    n = (len(arr) - PLAYERSUB10_SCAN_BLOCK_SIZE) // 4 + 1
+    if n <= 0:
+        return [], 0
+
+    speed_mult = _read_f32_field(arr, PLAYERSUB10_OFF_SPEED_MULTIPLIER, n)
+    base_speed = _read_f32_field(arr, PLAYERSUB10_OFF_BASE_SPEED, n)
+    soft_limit = _read_f32_field(arr, PLAYERSUB10_OFF_SOFT_SPEED_LIMIT, n)
+    speed = _read_f32_field(arr, PLAYERSUB10_OFF_VEHICLE_SPEED, n)
+    last_speed = _read_f32_field(arr, PLAYERSUB10_OFF_LAST_SPEED, n)
+    hard_limit = _read_f32_field(arr, PLAYERSUB10_OFF_HARD_SPEED_LIMIT, n)
+    L = min(len(speed_mult), len(base_speed), len(soft_limit), len(speed), len(last_speed), len(hard_limit))
+    speed_mult, base_speed, soft_limit, speed, last_speed, hard_limit = (
+        speed_mult[:L], base_speed[:L], soft_limit[:L], speed[:L], last_speed[:L], hard_limit[:L]
+    )
+
+    # NaN-safe: a hard_limit that's NaN (garbage bytes) must compare False
+    # against every threshold below, not raise/warn -- np.errstate silences
+    # the "invalid value" warnings that garbage float comparisons trigger.
+    with np.errstate(invalid="ignore"):
+        hard_limit_ok = np.zeros(L, dtype=bool)
+        for h in HARD_SPEED_LIMITS:
+            hard_limit_ok |= np.abs(hard_limit - h) <= HARD_SPEED_LIMIT_TOL
+        mask = (
+            hard_limit_ok
+            & (speed_mult >= 0.7) & (speed_mult <= 1.05)
+            & (base_speed > 0.0) & (base_speed <= hard_limit + 1.0)
+            & (soft_limit >= base_speed - 1.0) & (soft_limit <= hard_limit + 1.0)
+            & (speed >= -1.0) & (speed <= hard_limit + 1.0)
+            & (np.abs(speed - last_speed) <= 15.0)
+        )
+
+    hits = np.nonzero(mask)[0]
+    return [start + int(h) * 4 for h in hits], L
+
+
+def find_playersub10_candidates():
+    """One-shot structural scan for PlayerSub10 objects across all of RAM --
+    same approach find_itemhandler_candidates() already uses successfully,
+    just fingerprinting PlayerSub10's speed-related fields instead of
+    ITEMHandler's recvPackets. No singleton address needed at all, so
+    PLAYERHOLDER_SINSTANCE_ADDR not checking out doesn't block this."""
+    print("Looking for PlayerSub10 (structural scan -- no address needed)...")
+    all_candidates = []
+    for start, end in REGIONS:
+        t0 = time.time()
+        candidates, n = scan_region_for_playersub10(start, end)
+        print(f"  0x{start:08X}-0x{end:08X}: {len(candidates)} raw hit(s) of {n} checked, {time.time() - t0:.2f}s")
+        all_candidates.extend(candidates)
+    return all_candidates
 
 
 def scan_region_for_raceinfo(start: int, end: int):
@@ -1609,6 +1748,8 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
     itemhandler_scan_done = False  # one attempt per race -- see the call site's comment
     prev_item_tail = {1: None, 2: None}  # slot -> last-seen item_tail, for pickup detection below
     next_speed_print = 0.0  # throttles MKW_SCAN_PLAYER_SPEED's print to ~2/sec, not every tick
+    playersub10_addrs = None  # resolved once per race by find_playersub10_candidates(), like itemhandler_addr
+    playersub10_scan_done = False
     ptr_tracked = {}  # source_offset -> {"target", "window", "history", "retargets"}
 
     other_addr = _find_other_player_addr(raceinfo_addr, player_addr)
@@ -1718,21 +1859,24 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
             # Live speed: DIAGNOSTIC ONLY, see MKW_SCAN_PLAYER_SPEED above.
             # Not wired into telemetry -- print and eyeball first.
             if SCAN_PLAYER_SPEED:
+                if playersub10_addrs is None and not playersub10_scan_done:
+                    playersub10_scan_done = True
+                    found = find_playersub10_candidates()
+                    if len(found) == 0:
+                        print("  no PlayerSub10 candidates this attempt (will not retry this race)")
+                        playersub10_addrs = []
+                    else:
+                        shown = ", ".join(f"0x{c:08X}" for c in found)
+                        print(f"  {len(found)} candidate(s): {shown}" + (" -- expected 2 (one per player)" if len(found) != 2 else ""))
+                        playersub10_addrs = found
                 now = time.time()
-                if now >= next_speed_print:
-                    next_speed_print = now + 2.0
-                    for idx in (0, 1):
-                        hops = debug_player_chain(idx)
-                        parts = []
-                        for key in ("holder", "players", "player", "player_sub", "player_sub10"):
-                            if key not in hops:
-                                break
-                            v = hops[key]
-                            parts.append(f"{key}=0x{v:08X}" if v else f"{key}=NULL")
-                        if "speed" in hops:
-                            s = hops["speed"]
-                            parts.append(f"speed={s:.1f}" if s is not None else "speed=?")
-                        print(f"[race {race_num}] chain idx {idx} -- " + " -> ".join(parts), flush=True)
+                if playersub10_addrs and now >= next_speed_print:
+                    next_speed_print = now + 0.5
+                    readings = []
+                    for addr in playersub10_addrs:
+                        s = read_float(addr + PLAYERSUB10_OFF_VEHICLE_SPEED)
+                        readings.append(f"0x{addr:08X}: {s:.1f}" if s is not None else f"0x{addr:08X}: ?")
+                    print(f"[race {race_num}] speed (structural scan) -- " + " | ".join(readings), flush=True)
         other_last = other_last_new
 
         if SCAN_PLAYER_ITEM:
