@@ -141,3 +141,53 @@ order by table_name, column_name;
 select c.relname as table_name, c.relrowsecurity as rls_enabled
 from pg_class c
 where c.relname in ('live_telemetry_events', 'race_position_samples', 'race_item_events');
+-- ============================================================================
+-- Immersive War Mode: speed telemetry (speed trap + speed-vs-time graph).
+--
+-- Adds the two flat top-speed columns on `races` (same convention as the
+-- lap-time columns above) plus one new PERMANENT per-race table,
+-- `race_speed_samples` -- the full speed-over-time timeline a finalized
+-- Immersive race carries forever, written once at finalize time from the
+-- `speed-update` telemetry events, same pattern as `race_position_samples`.
+-- No ephemeral table of its own: `speed-update` events ride in
+-- `live_telemetry_events` (already generic on `event_type`) while a race
+-- is in progress.
+--
+-- Stores the RAW PlayerSub10.vehicleSpeed reading, not km/h or any other
+-- real-world unit -- see the module doc in lib/telemetry/events.ts for why
+-- (no conversion factor has been confirmed to the precision this project
+-- wants; see the roadmap doc's "Investigated, not implemented" section).
+--
+-- Safe to run multiple times -- every statement is idempotent.
+-- ============================================================================
+
+alter table races
+  add column if not exists adi_top_speed double precision,
+  add column if not exists ren_top_speed double precision;
+
+create table if not exists race_speed_samples (
+  race_id uuid not null references races (id) on delete cascade,
+  player_id text not null check (player_id in ('adi', 'ren')),
+  ts_ms integer not null,
+  speed double precision not null
+);
+
+create index if not exists race_speed_samples_race_id_idx on race_speed_samples (race_id, ts_ms);
+
+-- Row Level Security: same convention as the rest of this file -- public
+-- read, writes only via the service role key on the server.
+alter table race_speed_samples enable row level security;
+
+create policy "public read race_speed_samples" on race_speed_samples for select using (true);
+
+-- ---------------------------------------------------------------------------
+-- Verify: the new races columns exist, race_speed_samples exists with RLS
+-- enabled, and the policy is in place.
+select table_name, column_name, is_nullable, data_type
+from information_schema.columns
+where table_name = 'races' and column_name in ('adi_top_speed', 'ren_top_speed')
+order by column_name;
+
+select c.relname as table_name, c.relrowsecurity as rls_enabled
+from pg_class c
+where c.relname = 'race_speed_samples';
