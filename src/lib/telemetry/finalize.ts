@@ -133,20 +133,48 @@ export async function maybeFinalizeImmersiveRace(
 
   const race = await store.addRace(seasonId, input);
 
+  // From here on, every write is "detail" on top of the race row that
+  // already exists and is already visible in the UI -- position/speed/
+  // item samples and the powerup rollup. Each one is isolated in its own
+  // try/catch and logged rather than thrown: these tables are newer and
+  // more likely to be mid-migration than `races` itself (this is exactly
+  // how one missing table, e.g. race_speed_samples not yet created,
+  // silently ate the item-events insert and the live_telemetry_events
+  // cleanup below it too, the first time this ran against real data --
+  // one failure should degrade that one feature, not cascade into every
+  // later step and leave ephemeral rows stuck uncleared).
   const positionSamples: RacePositionSample[] = events
     .filter((e): e is PositionUpdateEvent => e.type === "position-update")
     .map((e) => ({ raceId: race.id, playerId: e.playerId, tsMs: e.tsMs, position: e.position, lap: e.lap }));
-  if (positionSamples.length > 0) await store.addRacePositionSamples(race.id, positionSamples);
+  if (positionSamples.length > 0) {
+    try {
+      await store.addRacePositionSamples(race.id, positionSamples);
+    } catch (err) {
+      console.error(`Immersive race ${race.id}: failed to store position samples`, err);
+    }
+  }
 
   const speedSamples: RaceSpeedSample[] = events
     .filter((e): e is SpeedUpdateEvent => e.type === "speed-update")
     .map((e) => ({ raceId: race.id, playerId: e.playerId, tsMs: e.tsMs, speed: e.speed }));
-  if (speedSamples.length > 0) await store.addRaceSpeedSamples(race.id, speedSamples);
+  if (speedSamples.length > 0) {
+    try {
+      await store.addRaceSpeedSamples(race.id, speedSamples);
+    } catch (err) {
+      console.error(`Immersive race ${race.id}: failed to store speed samples`, err);
+    }
+  }
 
   const itemEventRows: RaceItemEvent[] = events
     .filter((e): e is ItemReceivedEvent => e.type === "item-received")
     .map((e) => ({ raceId: race.id, playerId: e.playerId, tsMs: e.tsMs, itemId: e.itemId, lap: e.lap }));
-  if (itemEventRows.length > 0) await store.addRaceItemEvents(race.id, itemEventRows);
+  if (itemEventRows.length > 0) {
+    try {
+      await store.addRaceItemEvents(race.id, itemEventRows);
+    } catch (err) {
+      console.error(`Immersive race ${race.id}: failed to store item events`, err);
+    }
+  }
 
   // Aggregate counts straight onto the race -- Tomfoolery Tales' data
   // source, landing in the SAME race_powerups table Battle Mode writes
@@ -162,8 +190,17 @@ export async function maybeFinalizeImmersiveRace(
     const [playerId, itemId] = key.split(":") as [PlayerId, ItemId];
     return { raceId: race.id, playerId, itemId, count };
   });
-  if (powerups.length > 0) await store.addRacePowerups(race.id, powerups);
+  if (powerups.length > 0) {
+    try {
+      await store.addRacePowerups(race.id, powerups);
+    } catch (err) {
+      console.error(`Immersive race ${race.id}: failed to store powerup rollup`, err);
+    }
+  }
 
+  // Unconditional: clearing the ephemeral holding rows is independent of
+  // whether every detail table above succeeded, and must not get skipped
+  // just because one of them failed.
   await store.clearLiveTelemetryEvents(seasonId, raceNumber);
 
   return { finalized: true, raceId: race.id };
