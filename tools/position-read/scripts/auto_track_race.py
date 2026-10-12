@@ -571,6 +571,83 @@ def item_name(item_id: int) -> str:
     return ITEM_NAMES.get(item_id, f"unknown item (id 0x{item_id:02X})")
 
 
+# --- Held item, step 4: the confirmed static-global chain -----------------
+# Supersedes the ITEMHandler::sInstance/recvPackets approach above for the
+# live telemetry path (that approach is kept only for the SCAN_PLAYER_ITEM
+# diagnostic call site further down -- untouched, still useful as a cross-
+# check). The chain below was confirmed live through Dolphin's own
+# debugger (Memory breakpoint -> Code view), not guessed -- see
+# resolve_held_item_chain.py's docstring for the full disassembly and
+# first-principles reasoning:
+#
+#     lis   r3, 0x809C
+#     lwz   r3, -0x11E0(r3)      ; r3 = *(0x809BEE20)   -- a FIXED global slot
+#     lwz   r0, 0x0014(r3)       ; r0 = *(r3 + 0x14)
+#     add   r3, r0, r29          ; r3 = r0 + r29  (r29 == 0 for the local player)
+#     lwz   r0, 0x008C(r3)       ; <- the held-item read itself
+#     cmpwi r0, 20               ; the game's own "no item" check
+#     cmpwi r0, 10               ; the game's own Golden Mushroom check
+#
+# Unlike every address this project chased before, 0x809BEE20 is loaded via
+# an immediate offset baked into the executable's own code, not computed at
+# runtime -- a real static global. resolve_held_item_chain.py confirmed
+# this resolves correctly with ZERO re-scanning across multiple full races
+# in a row (clean alternation between real item ids and the "no item"
+# sentinel, exactly matching what was actually picked up each time:
+# Bullet Bill, Triple Red Shell, Triple Mushroom, Golden Mushroom, Triple
+# Banana, Fake Item Box, and more across several separate runs).
+#
+# Player 1 (r29=0, i.e. the offset applies directly off array_ptr with no
+# further addition) is CONFIRMED to this standard. Player 2's equivalent
+# offset is NOT yet confirmed to the same standard -- probe_item_offset_p2.py
+# scanned a window around array_ptr for a second oscillating item-like
+# signal and array_ptr+0x2A0 was its best/top-ranked candidate (5 distinct
+# streaks across a 90s run, cleanly alternating between two real item
+# types -- Red Shell / Green Shell -- at boundaries matching all 3
+# independently reported real pickup times), clearly more plausible than
+# the dozens of other candidates that were single-value streaks lasting
+# 80+ seconds (impossible for a real held item -- nobody holds one that
+# long without using it, so those are almost certainly an unrelated
+# field that happens to contain a small integer). Treat P2 pickups as
+# provisional until confirmed against a real test -- if they're visibly
+# wrong (wrong item name, wrong timing), report back so this can be
+# re-probed.
+ITEM_CHAIN_GLOBAL_PTR_SLOT = 0x809BEE20
+ITEM_CHAIN_ARRAY_PTR_OFFSET = 0x14
+ITEM_CHAIN_HELD_ITEM_OFFSET = {
+    1: 0x8C,   # confirmed (debugger-verified, multi-race tested)
+    2: 0x2A0,  # provisional -- probe_item_offset_p2.py's top candidate, not yet confirmed
+}
+
+
+def _is_valid_game_ptr(v) -> bool:
+    return v is not None and ((0x80000000 <= v < 0x81800000) or (0x90000000 <= v < 0x94000000))
+
+
+def resolve_item_chain_array_ptr():
+    """Walks the confirmed static-global chain as far as array_ptr (shared
+    by both players -- only the final per-slot offset differs). Returns
+    None if either hop doesn't check out this attempt (e.g. between races,
+    same as the rest of this project's chains)."""
+    base = read_ptr(ITEM_CHAIN_GLOBAL_PTR_SLOT)
+    if not _is_valid_game_ptr(base):
+        return None
+    array_ptr = read_ptr(base + ITEM_CHAIN_ARRAY_PTR_OFFSET)
+    if not _is_valid_game_ptr(array_ptr):
+        return None
+    return array_ptr
+
+
+def read_held_item(array_ptr: int, slot: int):
+    """Reads the held-item value for `slot` (1 or 2) off an already-
+    resolved array_ptr. Returns None on a bad read, otherwise the raw
+    byte value (0x14 == no item, see ITEM_NAMES)."""
+    offset = ITEM_CHAIN_HELD_ITEM_OFFSET.get(slot)
+    if offset is None:
+        return None
+    return read_ptr(array_ptr + offset)
+
+
 def read_player_item_window(player_addr: int):
     """Bulk-reads [player_addr, player_addr + PLAYER_ITEM_SCAN_SIZE) as a
     numpy byte array, or None if the read failed. One read per poll tick,
@@ -1892,72 +1969,29 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
             if other_cur is not None:
                 telemetry.poll_slot(race_num, ts_ms, 2, other_cur, bool(other_cur[3] & STATE_FINISHING))
 
-            # Item pickups: independent of SCAN_PLAYER_ITEM (that flag only
-            # gates the exploratory diagnostic scans below, used to FIND a
-            # trustworthy signal in the first place). item_tail is the one
-            # item-related field this project has actually validated with
-            # the same strict, multi-field shape-check already trusted for
-            # Raceinfo/RaceConfig (see _itemhandler_shape_ok) -- the only
-            # one wired to send anything real. A pickup is "item_tail went
-            # from empty straight to a real item id": MKW never lets a
-            # player hold two items at once, so that exact transition can
-            # only mean a box was just opened.
-            #
-            # Resolving itemhandler_addr used to be a single attempt made
-            # the instant stage hits 2 (the literal start of the race) via
-            # find_itemhandler_addr() -- but recvPackets is guaranteed
-            # all-zero at that exact moment (nobody's opened a box yet),
-            # and _itemhandler_shape_ok() explicitly rejects an all-zero
-            # candidate, so that one attempt was reliably doomed and item
-            # detection was permanently disabled for the rest of the race,
-            # every race. Fixed by splitting the two halves of
-            # find_itemhandler_addr() apart and giving them different
-            # retry policies: _itemhandler_fast_check() (published address
-            # + shape check, one pointer deref and a 96-byte read) is cheap
-            # enough to retry every tick, so it's retried until it
-            # succeeds -- which it will, the moment either player opens
-            # their first item box and recvPackets goes non-zero. The
-            # expensive full-RAM scan (find_itemhandler_candidates(), via
-            # find_itemhandler_addr()'s fallback) stays a genuine one-shot
-            # -- see its own docstring for why retrying THAT part floods
-            # the terminal with 100,000+ ambiguous candidates and burns
-            # real CPU for no benefit -- just delayed a few seconds so it
-            # isn't guaranteed to run against the same all-zero RAM that
-            # makes the fast path fail at tick one.
-            if itemhandler_addr is None:
-                itemhandler_addr = _itemhandler_fast_check()
-                if (
-                    itemhandler_addr is None
-                    and not itemhandler_scan_done
-                    and (time.time() - race_start) >= ITEMHANDLER_FALLBACK_SCAN_DELAY_S
-                ):
-                    # One-shot expensive fallback -- see the comment block
-                    # above. _itemhandler_fast_check() already just failed
-                    # above, so go straight to the full scan rather than
-                    # re-trying the fast path again via
-                    # find_itemhandler_addr().
-                    itemhandler_scan_done = True
-                    candidates = find_itemhandler_candidates()
-                    if len(candidates) == 1:
-                        print(f"Found ITEMHandler at 0x{candidates[0]:08X}")
-                        itemhandler_addr = candidates[0]
-                    elif len(candidates) == 0:
-                        print("  no candidates this attempt (recvPackets may still be all-zero -- giving up for this race)")
-                    else:
-                        shown = ", ".join(f"0x{c:08X}" for c in candidates[:20])
-                        print(f"  {len(candidates)} candidates, too ambiguous to pick one: {shown}")
-            if itemhandler_addr is not None:
-                for slot, addr, reading in ((1, player_addr, cur), (2, other_addr, other_cur)):
-                    if addr is None or reading is None:
+            # Item pickups: via the confirmed static-global chain (see
+            # "Held item, step 4" above ITEM_CHAIN_GLOBAL_PTR_SLOT) --
+            # replaces the ITEMHandler::sInstance/recvPackets approach,
+            # which never once resolved successfully in three real test
+            # races (the published address never checked out, and the
+            # full-RAM-scan fallback returned 120,000+ ambiguous
+            # candidates -- too weak a fingerprint to ever work). The
+            # chain below was debugger-verified for Player 1 and tracked
+            # correctly with zero re-scanning across several real races.
+            # array_ptr is resolved once per tick (shared by both slots --
+            # only the final per-slot offset differs), and a pickup is
+            # "the held-item value went from the (no item) sentinel
+            # straight to a real item id": MKW never lets a player hold
+            # two items at once, so that exact transition can only mean a
+            # box was just opened.
+            item_array_ptr = resolve_item_chain_array_ptr()
+            if item_array_ptr is not None:
+                for slot, reading in ((1, cur), (2, other_cur)):
+                    if reading is None:
                         continue
-                    try:
-                        pid = dme.read_byte(addr + PLAYER_OFF_ID)
-                    except Exception:
+                    tail = read_held_item(item_array_ptr, slot)
+                    if tail is None:
                         continue
-                    packet = read_item_packet(itemhandler_addr, pid)
-                    if packet is None:
-                        continue
-                    tail = packet[ITEMPACKET_OFF_ITEM_TAIL]
                     prev_tail = prev_item_tail.get(slot)
                     if prev_tail == ITEM_NONE_VALUE and HELD_ITEM_MIN <= tail <= HELD_ITEM_MAX:
                         print(f"[race {race_num}] player {slot} picked up: {item_name(tail)} "
