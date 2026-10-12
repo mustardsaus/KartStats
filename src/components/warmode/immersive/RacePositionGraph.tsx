@@ -29,6 +29,23 @@ export function RacePositionGraph({ samples }: { samples: RacePositionSample[] }
   }
   const data = [...byTs.values()].sort((a, b) => a.tsMs - b.tsMs);
 
+  // Forward-fill: a row only carries a player's position when THEY had an
+  // event at that exact timestamp, but recharts' connectNulls only
+  // bridges gaps between two known points -- it can't extend a line past
+  // its last defined value, so a player who stops moving (and so stops
+  // generating new position-update rows) would otherwise just vanish from
+  // the graph mid-race instead of holding their last known spot. Carry
+  // each player's last seen position onto every later row so their line
+  // runs flat to the end whenever the other player is still racing.
+  let lastAdiPosition: number | undefined;
+  let lastRenPosition: number | undefined;
+  for (const row of data) {
+    if (row.adiPosition !== undefined) lastAdiPosition = row.adiPosition;
+    else row.adiPosition = lastAdiPosition;
+    if (row.renPosition !== undefined) lastRenPosition = row.renPosition;
+    else row.renPosition = lastRenPosition;
+  }
+
   return (
     <ResponsiveContainer width="100%" height={220}>
       <LineChart data={data} margin={{ top: 10, right: 16, left: -10, bottom: 0 }}>
