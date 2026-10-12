@@ -280,8 +280,20 @@ class TelemetryBridge:
 
         if finishing and not state["finished"]:
             state["finished"] = True
-            if lap >= 3:
-                self._complete_lap(race_number, ts_ms, slot, state, 3)  # no-op if the 3 -> 4 tick already did it
+            # Always close out lap 3 here, regardless of what `lap` reads
+            # on this exact tick. STATE_FINISHING only ever appears once
+            # lap 3 is actually complete, but the lap counter and the
+            # finishing flag aren't guaranteed to update on the same
+            # polled tick -- a poll that catches finishing=True while
+            # `lap` still reads 2 (the increment to 3 lands a tick later)
+            # used to permanently lose lap 3's split, since nothing
+            # re-checks it after `state["finished"]` latches True right
+            # here. Confirmed via a real race: player finished 11th
+            # (crossed the line for real, not a DNF) with no lap-3 time
+            # recorded. _complete_lap is idempotent (it's a no-op if the
+            # 2 -> 3 tick was already caught on an earlier poll), so this
+            # is always safe to call unconditionally.
+            self._complete_lap(race_number, ts_ms, slot, state, 3)
             self._queue(
                 {"type": "race-finished", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": ts_ms, "slot": slot, "finalPosition": pos, "finalTimeMs": ts_ms}
             )

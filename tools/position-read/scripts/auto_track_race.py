@@ -369,7 +369,13 @@ SCAN_PLAYER_SPEED = bool(os.environ.get("MKW_SCAN_PLAYER_SPEED"))
 # liveness filter removes the static-table false positives for free:
 # anything that hasn't moved by more than the epsilon across a settle
 # window is a table row, not a moving kart.
-PLAYERSUB10_LIVENESS_WINDOW = 6       # samples to collect before judging (~3s at 0.5s/tick)
+PLAYERSUB10_LIVENESS_WINDOW = 14      # samples to collect before judging (~7s at 0.5s/tick) -- widened from
+                                       # 6 (~3s): confirmed via real races that a human stopped during
+                                       # just the countdown/early window gets wrongly dropped as "static"
+                                       # and a CPU's address gets promoted into their slot instead (see
+                                       # the stage==2 gate on the scan start, right below, for the other
+                                       # half of this fix). Still a one-shot judgment, never re-checked
+                                       # mid-race -- see that decision's own comment further down.
 PLAYERSUB10_LIVENESS_EPSILON = 0.5    # min (max-min) speed swing over the window to count as "live"
 
 # Player 1 vs player 2, once liveness narrows the field to the real
@@ -2000,7 +2006,7 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
             # Live speed: DIAGNOSTIC ONLY, see MKW_SCAN_PLAYER_SPEED above.
             # Not wired into telemetry -- print and eyeball first.
             if SCAN_PLAYER_SPEED:
-                if playersub10_addrs is None and not playersub10_scan_done:
+                if playersub10_addrs is None and not playersub10_scan_done and stage == 2:
                     playersub10_scan_done = True
                     found = find_playersub10_candidates()
                     if len(found) == 0:
@@ -2029,10 +2035,23 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
                     # object moves as the race plays out (lap 1 alone is
                     # plenty of acceleration/cornering/boosts to clear the
                     # epsilon). Judged exactly once per race, not re-checked
-                    # continuously, so a kart that happens to coast dead
-                    # straight for 3s right at the start isn't later re-added
-                    # or dropped -- that tradeoff is fine since the window is
-                    # early in lap 1 nearly every race.
+                    # continuously -- a continuous re-validation attempt was
+                    # tried and reverted earlier in this project's history
+                    # (it used (pos,lap) stability as a "stationary" proxy,
+                    # which real test data proved wrong: a player's rank and
+                    # lap can both legitimately hold steady for 20+ seconds
+                    # of genuinely active driving). The real remaining risk
+                    # here is narrower and still present: a human who sits
+                    # completely motionless for this entire ~7s window right
+                    # after GO (not just during the countdown, which the
+                    # stage==2 gate above already excludes) still reads as
+                    # "static" and gets dropped, letting the next-lowest-
+                    # address CPU get promoted into their slot instead. No
+                    # fix for that specific case yet -- it needs a signal
+                    # other than "did they move in an early window" to
+                    # catch a legitimately-stationary human without
+                    # reintroducing the reverted re-validation's false
+                    # positives.
                     if playersub10_live_addrs is None and all(
                         len(playersub10_history.get(a, [])) >= PLAYERSUB10_LIVENESS_WINDOW for a in playersub10_addrs
                     ):
