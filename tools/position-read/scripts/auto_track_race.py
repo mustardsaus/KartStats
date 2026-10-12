@@ -598,26 +598,39 @@ def item_name(item_id: int) -> str:
 # Banana, Fake Item Box, and more across several separate runs).
 #
 # Player 1 (r29=0, i.e. the offset applies directly off array_ptr with no
-# further addition) is CONFIRMED to this standard. Player 2's equivalent
-# offset is NOT yet confirmed to the same standard -- probe_item_offset_p2.py
-# scanned a window around array_ptr for a second oscillating item-like
-# signal and array_ptr+0x2A0 was its best/top-ranked candidate (5 distinct
-# streaks across a 90s run, cleanly alternating between two real item
-# types -- Red Shell / Green Shell -- at boundaries matching all 3
-# independently reported real pickup times), clearly more plausible than
-# the dozens of other candidates that were single-value streaks lasting
-# 80+ seconds (impossible for a real held item -- nobody holds one that
-# long without using it, so those are almost certainly an unrelated
-# field that happens to contain a small integer). Treat P2 pickups as
-# provisional until confirmed against a real test -- if they're visibly
-# wrong (wrong item name, wrong timing), report back so this can be
-# re-probed.
+# further addition) is CONFIRMED to this standard and stays live-wired
+# below. Player 2's equivalent offset is UNRESOLVED: array_ptr+0x2A0
+# (probe_item_offset_p2.py's top candidate) was tried and DISPROVEN by a
+# real test race -- the player confirmed a Bullet Bill pickup that this
+# offset never caught (zero item-received events sent for slot 2 all
+# race). Rather than guess again and risk sending more wrong data, P2 is
+# left out of ITEM_CHAIN_HELD_ITEM_OFFSET entirely (so the live loop
+# below naturally sends nothing for slot 2) and instead watched
+# diagnostically across several other candidates from that same probe --
+# see P2_ITEM_PROBE_CANDIDATES below: it prints (never sends) whenever
+# a candidate shows the exact
+# "was the (no item) sentinel, now a real item id" transition, so the
+# next real test's log can confirm the right one by timing/name against
+# what was actually picked up, the same standard Player 1's offset was
+# held to.
 ITEM_CHAIN_GLOBAL_PTR_SLOT = 0x809BEE20
 ITEM_CHAIN_ARRAY_PTR_OFFSET = 0x14
 ITEM_CHAIN_HELD_ITEM_OFFSET = {
     1: 0x8C,   # confirmed (debugger-verified, multi-race tested)
-    2: 0x2A0,  # provisional -- probe_item_offset_p2.py's top candidate, not yet confirmed
+    # 2: intentionally absent -- see comment above
 }
+
+# Diagnostic-only candidates for Player 2's still-unresolved offset, carried
+# over from probe_item_offset_p2.py's original scan (its best/top-ranked
+# results by streak count and plausibility, 0x2A0 -- already disproven --
+# excluded). Watched every tick alongside the confirmed Player 1 chain,
+# printed only on the same "sentinel -> real item id" transition that
+# confirmed Player 1's offset, never sent to KartStats until one of these
+# is confirmed the same way.
+P2_ITEM_PROBE_CANDIDATES = [
+    0x2D8, 0x6CC, 0x1234, 0x480, 0x2F0, 0x2F4, 0xFEC, 0x2EC,
+    0x16C4, 0x147C, 0x1B54, 0x2BC, 0x914, 0x2A4, 0x2B0, 0x190C,
+]
 
 
 def _is_valid_game_ptr(v) -> bool:
@@ -1889,6 +1902,7 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
     itemhandler_addr = None
     itemhandler_scan_done = False  # one attempt per race -- see the call site's comment
     prev_item_tail = {1: None, 2: None}  # slot -> last-seen item_tail, for pickup detection below
+    prev_p2_item_candidate_tail = {}  # offset -> last-seen value, for the P2_ITEM_PROBE_CANDIDATES diagnostic below
     next_speed_print = 0.0  # throttles MKW_SCAN_PLAYER_SPEED's print to ~2/sec, not every tick
     playersub10_addrs = None  # resolved once per race by find_playersub10_candidates(), like itemhandler_addr
     playersub10_scan_done = False
@@ -1998,6 +2012,27 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
                               f"(lap {reading[1]}/{STANDARD_LAP_COUNT})", flush=True)
                         telemetry.send_item_received(race_num, slot, ts_ms, tail, reading[1])
                     prev_item_tail[slot] = tail
+
+                # Diagnostic-only: watch P2_ITEM_PROBE_CANDIDATES for the
+                # same sentinel -> real-item transition, to confirm Player
+                # 2's real offset against this race's actual pickups --
+                # see the comment above ITEM_CHAIN_HELD_ITEM_OFFSET. Never
+                # calls telemetry.send_item_received -- this is purely to
+                # populate the log for comparison after the race.
+                if other_cur is not None:
+                    for cand_off in P2_ITEM_PROBE_CANDIDATES:
+                        cand_val = read_ptr(item_array_ptr + cand_off)
+                        if cand_val is None:
+                            continue
+                        prev_cand = prev_p2_item_candidate_tail.get(cand_off)
+                        if prev_cand == ITEM_NONE_VALUE and HELD_ITEM_MIN <= cand_val <= HELD_ITEM_MAX:
+                            print(
+                                f"[race {race_num}] P2 item-probe candidate array_ptr+0x{cand_off:X}: "
+                                f"picked up {item_name(cand_val)} (lap {other_cur[1]}/{STANDARD_LAP_COUNT}) "
+                                "-- diagnostic only, not sent",
+                                flush=True,
+                            )
+                        prev_p2_item_candidate_tail[cand_off] = cand_val
 
             # Live speed: DIAGNOSTIC ONLY, see MKW_SCAN_PLAYER_SPEED above.
             # Not wired into telemetry -- print and eyeball first.
