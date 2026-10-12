@@ -456,6 +456,12 @@ PLAYERSUB10_SLOT_BY_ADDRESS_ORDER = True
 # if it isn't.
 ITEMHANDLER_SINSTANCE_ADDR = 0x809C20F8
 ITEMHANDLER_OFF_RECV_PACKETS = 0x10
+# How long into the race to wait, after the cheap published-address
+# check keeps failing, before trying the expensive one-shot full-RAM
+# scan fallback -- recvPackets is guaranteed all-zero at tick one (see
+# the live call site's comment), so giving it a few seconds improves
+# the scan's own odds too, not just the fast path's.
+ITEMHANDLER_FALLBACK_SCAN_DELAY_S = 5.0
 ITEMHANDLER_RECV_PACKET_COUNT = 12
 ITEM_OR_EMPTY_MAX = 0x14   # valid item ids (0x00-0x12) plus "(no item)" (0x14)
 ITEM_NONE_VALUE = 0x14     # the specific "(no item)" sentinel value -- a pickup is this -> a real item id
@@ -705,18 +711,34 @@ def find_itemhandler_candidates():
     return all_candidates
 
 
-def find_itemhandler_addr():
-    """Locates the live ITEMHandler object, verifying content shape rather
-    than trusting any address blindly. Tries the published static pointer
-    first (free if it happens to be right for this build), falls back to a
-    full structural scan of RAM if it doesn't check out. Returns the
-    address, or None if nothing conclusive was found this attempt (caller
-    retries later -- recvPackets may still be all-zero early in a race)."""
+def _itemhandler_fast_check():
+    """Just the published-address half of find_itemhandler_addr(): a single
+    pointer deref plus a 96-byte read and some arithmetic, cheap enough to
+    retry every tick. Deliberately does NOT fall back to the full-RAM scan
+    -- that half is the expensive, ambiguity-prone one (see
+    find_itemhandler_candidates()'s docstring) and callers that want it
+    stay in control of how often it runs. Returns the address, or None if
+    the published pointer doesn't check out this attempt (recvPackets may
+    still be all-zero early in a race -- safe to call again next tick)."""
     addr = read_ptr(ITEMHANDLER_SINSTANCE_ADDR)
     if addr is not None and (0x80000000 <= addr < 0x81800000 or 0x90000000 <= addr < 0x94000000):
         if _itemhandler_shape_ok(addr):
             print(f"ITEMHandler::sInstance (0x{ITEMHANDLER_SINSTANCE_ADDR:08X}) -> 0x{addr:08X} -- shape check passed")
             return addr
+    return None
+
+
+def find_itemhandler_addr():
+    """Locates the live ITEMHandler object, verifying content shape rather
+    than trusting any address blindly. Tries the published static pointer
+    first via _itemhandler_fast_check() (free if it happens to be right for
+    this build), falls back to a full structural scan of RAM if it doesn't
+    check out. Returns the address, or None if nothing conclusive was found
+    this attempt (caller retries later -- recvPackets may still be all-zero
+    early in a race)."""
+    addr = _itemhandler_fast_check()
+    if addr is not None:
+        return addr
 
     candidates = find_itemhandler_candidates()
     if len(candidates) == 1:
@@ -1868,9 +1890,50 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
             # from empty straight to a real item id": MKW never lets a
             # player hold two items at once, so that exact transition can
             # only mean a box was just opened.
-            if itemhandler_addr is None and not itemhandler_scan_done:
-                itemhandler_addr = find_itemhandler_addr()
-                itemhandler_scan_done = True
+            #
+            # Resolving itemhandler_addr used to be a single attempt made
+            # the instant stage hits 2 (the literal start of the race) via
+            # find_itemhandler_addr() -- but recvPackets is guaranteed
+            # all-zero at that exact moment (nobody's opened a box yet),
+            # and _itemhandler_shape_ok() explicitly rejects an all-zero
+            # candidate, so that one attempt was reliably doomed and item
+            # detection was permanently disabled for the rest of the race,
+            # every race. Fixed by splitting the two halves of
+            # find_itemhandler_addr() apart and giving them different
+            # retry policies: _itemhandler_fast_check() (published address
+            # + shape check, one pointer deref and a 96-byte read) is cheap
+            # enough to retry every tick, so it's retried until it
+            # succeeds -- which it will, the moment either player opens
+            # their first item box and recvPackets goes non-zero. The
+            # expensive full-RAM scan (find_itemhandler_candidates(), via
+            # find_itemhandler_addr()'s fallback) stays a genuine one-shot
+            # -- see its own docstring for why retrying THAT part floods
+            # the terminal with 100,000+ ambiguous candidates and burns
+            # real CPU for no benefit -- just delayed a few seconds so it
+            # isn't guaranteed to run against the same all-zero RAM that
+            # makes the fast path fail at tick one.
+            if itemhandler_addr is None:
+                itemhandler_addr = _itemhandler_fast_check()
+                if (
+                    itemhandler_addr is None
+                    and not itemhandler_scan_done
+                    and (time.time() - race_start) >= ITEMHANDLER_FALLBACK_SCAN_DELAY_S
+                ):
+                    # One-shot expensive fallback -- see the comment block
+                    # above. _itemhandler_fast_check() already just failed
+                    # above, so go straight to the full scan rather than
+                    # re-trying the fast path again via
+                    # find_itemhandler_addr().
+                    itemhandler_scan_done = True
+                    candidates = find_itemhandler_candidates()
+                    if len(candidates) == 1:
+                        print(f"Found ITEMHandler at 0x{candidates[0]:08X}")
+                        itemhandler_addr = candidates[0]
+                    elif len(candidates) == 0:
+                        print("  no candidates this attempt (recvPackets may still be all-zero -- giving up for this race)")
+                    else:
+                        shown = ", ".join(f"0x{c:08X}" for c in candidates[:20])
+                        print(f"  {len(candidates)} candidates, too ambiguous to pick one: {shown}")
             if itemhandler_addr is not None:
                 for slot, addr, reading in ((1, player_addr, cur), (2, other_addr, other_cur)):
                     if addr is None or reading is None:
