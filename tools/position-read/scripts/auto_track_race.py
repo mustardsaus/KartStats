@@ -1731,19 +1731,24 @@ def _wait_for_other_player_finish(other_addr: int, race_num: int, telemetry, rac
     finishes, stops making sense, or timeout_s runs out (e.g. the other
     player quit to the menu without finishing). Does not touch
     track_until_race_ends's own return value or timing at all -- this
-    only ever runs after that function has already decided to return."""
+    only ever runs after that function has already decided to return.
+
+    Reads/sends THIS slot's own current state before ever checking the
+    shared race-wide stage, not after -- one call site (the
+    left_race_stage path) invokes this function at the exact moment
+    `stage` has ALREADY left 2, e.g. because this very slot was the last
+    racer still going and its own finish is what just ended the race for
+    everyone. Checking stage first would return immediately every time
+    that happens, before this slot's real finish (lap 3's time, the real
+    finalTimeMs) was ever read or sent -- which is exactly the scenario
+    this function exists to catch, so the stage check must come after,
+    not before, the poll."""
     print(f"[race {race_num}] KartStats bridge: waiting for the other player to finish too...", flush=True)
     deadline = time.time() + timeout_s
     stale = 0
     while time.time() < deadline:
         if not dme.is_hooked():
             return
-        # The race ends for EVERYONE once all the other racers (CPUs
-        # included) finish -- a last-place player never crosses the line.
-        if raceinfo_addr is not None:
-            stage = read_ptr(raceinfo_addr + RACEINFO_OFF_STAGE)
-            if stage is not None and stage != 2:
-                return
         cur = read_player(other_addr)
         if cur is None:
             stale += 1
@@ -1757,6 +1762,13 @@ def _wait_for_other_player_finish(other_addr: int, race_num: int, telemetry, rac
         telemetry.poll_slot(race_num, ts_ms, 2, cur, bool(flags & STATE_FINISHING))
         if flags & STATE_FINISHING:
             return
+        # The race ends for EVERYONE once all the other racers (CPUs
+        # included) finish -- a last-place player never crosses the line.
+        # Checked AFTER the poll above, not before -- see the docstring.
+        if raceinfo_addr is not None:
+            stage = read_ptr(raceinfo_addr + RACEINFO_OFF_STAGE)
+            if stage is not None and stage != 2:
+                return
         time.sleep(TRACK_POLL_S)
 
 
