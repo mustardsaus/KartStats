@@ -388,14 +388,6 @@ PLAYERSUB10_LIVENESS_EPSILON = 0.5    # min (max-min) speed swing over the windo
 # something to patch around silently.
 PLAYERSUB10_SLOT_BY_ADDRESS_ORDER = True
 
-# Continuous re-validation against ground truth, to catch and correct the
-# above heuristic when it's wrong -- see the call site's comment for the
-# real failure case this caught. All three deliberately conservative:
-# a slow, confident trigger beats a twitchy one that reassigns on noise.
-PLAYERSUB10_REVALIDATE_STATIONARY_S = 5.0       # how long pos+lap must hold before a player counts as genuinely stationary
-PLAYERSUB10_REVALIDATE_MOVING_THRESHOLD = 5.0   # a speed reading at/above this contradicts stationarity (well above idle/noise)
-PLAYERSUB10_REVALIDATE_MIN_READINGS = 4         # don't judge off a single noisy sample
-
 # --- Held item, step 2: ITEMHandler::sInstance, a documented static --------
 # Race 1's direct byte-level scan above ruled out every offset in the
 # player struct window itself: offsets spaced 0xC4 apart cycling through
@@ -1903,16 +1895,6 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
     playersub10_history = {}       # addr -> list of recent vehicleSpeed readings, for the liveness filter
     playersub10_live_addrs = None  # narrowed subset of playersub10_addrs once PLAYERSUB10_LIVENESS_WINDOW samples are in
     playersub10_slot_addrs = None  # {1: addr, 2: addr} once auto-identified -- see PLAYERSUB10_SLOT_BY_ADDRESS_ORDER below
-    # Ground truth for re-validating the slot assignment below -- NOT
-    # subject to the address-order heuristic's ambiguity, since it comes
-    # from the already-reliable RaceinfoPlayer-based position/lap reads
-    # (same source as the position graph and finish detection). Tracks
-    # how long each raw slot (1, 2) has held the exact same (pos, lap)
-    # reading -- a player who hasn't budged from that for a sustained
-    # window is genuinely stationary, not just between position-update
-    # ticks.
-    playersub10_last_pos_lap = {1: None, 2: None}
-    playersub10_stationary_since = {1: None, 2: None}
     ptr_tracked = {}  # source_offset -> {"target", "window", "history", "retargets"}
 
     other_addr = _find_other_player_addr(raceinfo_addr, player_addr)
@@ -1961,19 +1943,6 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
             other_last_new = other_last
 
         if telemetry is not None and stage == 2:
-            # Keep the stationary-since tracker current every tick,
-            # independent of SCAN_PLAYER_SPEED -- cheap (just a tuple
-            # compare), and the re-validation check below needs it to
-            # already reflect a player who went stationary before speed
-            # scanning's own 0.5s-throttled cycle next looks at it.
-            for _ps_slot, _ps_reading in ((1, cur), (2, other_cur)):
-                if _ps_reading is None:
-                    continue
-                _ps_key = (_ps_reading[0], _ps_reading[1])  # (pos, lap)
-                if playersub10_last_pos_lap[_ps_slot] != _ps_key:
-                    playersub10_last_pos_lap[_ps_slot] = _ps_key
-                    playersub10_stationary_since[_ps_slot] = time.time()
-
             if not clock_started:
                 clock_started = True
                 race_start = time.time()
@@ -2102,63 +2071,6 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
                         else:
                             print(f"  can't auto-identify both players from {len(live)} live candidate(s) -- no speed telemetry sent this race", flush=True)
 
-                    # Re-validate the assignment against ground truth every
-                    # cycle (not just once) -- PLAYERSUB10_SLOT_BY_ADDRESS_ORDER
-                    # is an empirical heuristic, confirmed WRONG in a real
-                    # test race: a CPU racer's address landed lower than a
-                    # human player's, got auto-identified as that player,
-                    # and kept reporting real movement for the rest of the
-                    # race even after the actual human parked. Catch that
-                    # by checking it against the position/lap tracking
-                    # above, which has no such ambiguity: if a slot has
-                    # been genuinely stationary (same pos+lap) for
-                    # PLAYERSUB10_REVALIDATE_STATIONARY_S and its assigned
-                    # address is STILL reporting clearly-moving speeds
-                    # through that whole window, the assignment is wrong.
-                    # Reassign to a live candidate that isn't already taken
-                    # and whose own recent readings actually look idle; if
-                    # no single candidate clearly fits, stop sending for
-                    # that slot rather than keep sending wrong data --
-                    # same "don't guess" principle as the rest of this
-                    # project's address-identification code.
-                    if playersub10_slot_addrs is not None:
-                        now_ts = time.time()
-                        for _rv_slot in (1, 2):
-                            since = playersub10_stationary_since.get(_rv_slot)
-                            if since is None or (now_ts - since) < PLAYERSUB10_REVALIDATE_STATIONARY_S:
-                                continue
-                            addr = playersub10_slot_addrs.get(_rv_slot)
-                            hist = playersub10_history.get(addr, [])
-                            if len(hist) < PLAYERSUB10_REVALIDATE_MIN_READINGS:
-                                continue
-                            if min(hist) < PLAYERSUB10_REVALIDATE_MOVING_THRESHOLD:
-                                continue  # at least one recent reading looks idle -- no contradiction
-                            other_slot = 2 if _rv_slot == 1 else 1
-                            taken = {playersub10_slot_addrs.get(other_slot)}
-                            idle_candidates = [
-                                a for a in (playersub10_live_addrs or [])
-                                if a not in taken and a != addr
-                                and len(playersub10_history.get(a, [])) >= PLAYERSUB10_REVALIDATE_MIN_READINGS
-                                and max(playersub10_history[a]) < PLAYERSUB10_REVALIDATE_MOVING_THRESHOLD
-                            ]
-                            if len(idle_candidates) == 1:
-                                print(
-                                    f"[race {race_num}] speed re-validation: player {_rv_slot} has been stationary "
-                                    f"for {now_ts - since:.1f}s but 0x{addr:08X} kept reporting movement -- "
-                                    f"reassigning to 0x{idle_candidates[0]:08X}",
-                                    flush=True,
-                                )
-                                playersub10_slot_addrs[_rv_slot] = idle_candidates[0]
-                            else:
-                                print(
-                                    f"[race {race_num}] speed re-validation: player {_rv_slot} has been stationary "
-                                    f"for {now_ts - since:.1f}s but 0x{addr:08X} kept reporting movement -- "
-                                    f"{len(idle_candidates)} idle candidate(s) to reassign to (need exactly 1), "
-                                    "dropping this slot for the rest of the race rather than guessing",
-                                    flush=True,
-                                )
-                                del playersub10_slot_addrs[_rv_slot]
-
                     # Send to KartStats: only the two auto-identified
                     # addresses, never the raw candidate list -- an
                     # unidentified race (playersub10_slot_addrs still
@@ -2174,13 +2086,8 @@ def track_until_race_ends(raceinfo_addr: int, player_addr: int, race_num: int, t
                     show_addrs = playersub10_live_addrs if playersub10_live_addrs is not None else playersub10_addrs
                     prefix = ""
                     if playersub10_slot_addrs is not None:
-                        # .get(), not [1]/[2] -- the re-validation step above
-                        # can drop a slot mid-race rather than keep sending
-                        # wrong data for it, so a key isn't guaranteed here.
-                        p1_addr = playersub10_slot_addrs.get(1)
-                        p2_addr = playersub10_slot_addrs.get(2)
-                        p1 = readings.get(p1_addr) if p1_addr is not None else None
-                        p2 = readings.get(p2_addr) if p2_addr is not None else None
+                        p1 = readings.get(playersub10_slot_addrs[1])
+                        p2 = readings.get(playersub10_slot_addrs[2])
                         prefix = f"P1: {p1:.1f} | P2: {p2:.1f} || " if p1 is not None and p2 is not None else ""
                     parts = [
                         f"0x{a:08X}: {readings[a]:.1f}" if readings.get(a) is not None else f"0x{a:08X}: ?"
