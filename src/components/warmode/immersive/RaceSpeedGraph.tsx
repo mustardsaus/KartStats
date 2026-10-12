@@ -9,13 +9,10 @@ import type { RaceSpeedSample } from "@/lib/types";
  * race's race_speed_samples, right as the Dolphin tracker shifts to the
  * next race. Reused as-is by Season Rewind's RaceTelemetryModal.
  *
- * Values are the raw PlayerSub10.vehicleSpeed reading the Dolphin side's
- * structural scan finds -- not km/h or any other real-world speed unit,
- * since no conversion factor has been confirmed (see the module doc in
- * lib/telemetry/events.ts). The axis is intentionally unitless for the
- * same reason -- comparing one race's trace to another's, or to the
- * circuit's all-time speed trap, is meaningful; a label like "km/h"
- * would not be.
+ * Values are km/h, confirmed and converted on the Python side before
+ * they're ever sent (see the module doc in lib/telemetry/events.ts and
+ * kartstats_bridge.py's _vehicle_speed_to_kph) -- the axis and tooltip
+ * both label the unit now that it's real.
  */
 export function RaceSpeedGraph({ samples }: { samples: RaceSpeedSample[] }) {
   if (samples.length === 0) {
@@ -53,7 +50,9 @@ export function RaceSpeedGraph({ samples }: { samples: RaceSpeedSample[] }) {
           tick={{ fill: "var(--color-text-faint)", fontSize: 11 }}
           tickLine={false}
           axisLine={false}
-          width={28}
+          width={40}
+          tickFormatter={(v: number) => `${v}`}
+          label={{ value: "km/h", angle: -90, position: "insideLeft", fill: "var(--color-text-faint)", fontSize: 10 }}
         />
         <Tooltip content={<SpeedTooltip />} />
         <Line type="monotone" dataKey="adiSpeed" name="Adi" stroke="var(--color-adi)" strokeWidth={2.5} dot={false} connectNulls />
@@ -80,13 +79,13 @@ function SpeedTooltip({
       {p.adiSpeed !== undefined && (
         <div className="flex items-center justify-between gap-4 text-adi">
           <span>Adi</span>
-          <span className="text-stat font-bold">{p.adiSpeed.toFixed(1)}</span>
+          <span className="text-stat font-bold">{p.adiSpeed.toFixed(1)} km/h</span>
         </div>
       )}
       {p.renSpeed !== undefined && (
         <div className="flex items-center justify-between gap-4 text-ren">
           <span>Ren</span>
-          <span className="text-stat font-bold">{p.renSpeed.toFixed(1)}</span>
+          <span className="text-stat font-bold">{p.renSpeed.toFixed(1)} km/h</span>
         </div>
       )}
     </div>

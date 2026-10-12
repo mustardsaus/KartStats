@@ -20,13 +20,12 @@
  * bugs, so this project's convention is to enforce it at the one real
  * ingestion choke point instead.
  *
- * speed-update's `speed` is the raw PlayerSub10.vehicleSpeed reading the
- * Python side's structural scan finds (see auto_track_race.py's
- * PLAYERSUB10_OFF_VEHICLE_SPEED) -- not km/h or any other real-world
- * unit, since no conversion factor has been confirmed. It's the same raw
- * unit on every race though, so finalize.ts's max() per race (the speed
- * trap) and circuit-records.ts's across-races/circuits comparisons are
- * both meaningful.
+ * speed-update's `speed` is km/h, confirmed and converted on the Python
+ * side (see kartstats_bridge.py's _vehicle_speed_to_kph) from the raw
+ * PlayerSub10.vehicleSpeed reading in game units/frame -- nothing on
+ * this side needs to know the conversion factor, finalize.ts's max() per
+ * race (the speed trap) and circuit-records.ts's across-races/circuits
+ * comparisons just consume the already-real-world number.
  */
 
 import type { ItemId, PlayerId, RawSeason } from "@/lib/types";

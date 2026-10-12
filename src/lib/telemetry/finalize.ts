@@ -31,11 +31,28 @@ type LoadoutDetectedEvent = Extract<StoredTelemetryEvent, { type: "loadout-detec
 type ItemReceivedEvent = Extract<StoredTelemetryEvent, { type: "item-received" }>;
 type SpeedUpdateEvent = Extract<StoredTelemetryEvent, { type: "speed-update" }>;
 
-function lapTimeMs(events: StoredTelemetryEvent[], playerId: PlayerId, lap: 1 | 2 | 3): number | null {
+/**
+ * Sentinel for a lap the player never actually completed -- the race
+ * ended (everyone else finished) before they crossed that lap's split,
+ * same situation lapTimeMs below handles for finalTimeMs via `?? null`
+ * one level up. Deliberately NOT null: every Immersive race's lap-time
+ * columns are always fully populated once finalized ("completeness in
+ * the records" -- no downstream code has to special-case a missing
+ * value), and since this is always far larger than any real lap, it
+ * naturally loses every min()-based "fastest lap" comparison on its
+ * own. The two places that read these columns for anything other than
+ * "is this lap populated" (circuit-records.ts's record scan,
+ * RaceResultPanel's total-time derivation and per-lap display) check
+ * for this sentinel explicitly rather than relying on that alone --
+ * see those files.
+ */
+export const DNF_LAP_TIME_MS = 99_999_999;
+
+function lapTimeMs(events: StoredTelemetryEvent[], playerId: PlayerId, lap: 1 | 2 | 3): number {
   const match = events.find(
     (e): e is LapCompleteEvent => e.type === "lap-complete" && e.playerId === playerId && e.lap === lap
   );
-  return match?.lapTimeMs ?? null;
+  return match?.lapTimeMs ?? DNF_LAP_TIME_MS;
 }
 
 /** This race's top speed for one player -- the "speed trap" -- or null if no speed-update events landed (auto-identification failed that attempt, or the race predates speed tracking). */

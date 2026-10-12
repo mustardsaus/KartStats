@@ -14,6 +14,7 @@ import { VEHICLES_BY_ID } from "@/lib/data/karts";
 import { Flag, Loader2, Trophy } from "lucide-react";
 import { cn, formatRaceTimeMs as formatTime } from "@/lib/utils";
 import type { CircuitRecord } from "@/lib/stats/circuit-records";
+import { DNF_LAP_TIME_MS } from "@/lib/telemetry/finalize";
 
 /**
  * Shown the instant an Immersive race finalizes, and kept showing until
@@ -146,7 +147,9 @@ function ResultCard({
   // deriving it keeps this consistent with the rest of the codebase's
   // "never store what's derivable" rule, and null (not a stale number)
   // whenever a lap split is missing, same as a DNF.
-  const totalRaceTimeMs = laps.every((ms) => ms != null) ? laps.reduce((sum, ms) => sum + (ms as number), 0) : null;
+  const totalRaceTimeMs = laps.every((ms) => ms != null && ms !== DNF_LAP_TIME_MS)
+    ? laps.reduce<number>((sum, ms) => sum + (ms as number), 0)
+    : null;
   // "This race/player is the one the record currently points to" -- works
   // whether circuitRecord was built with or without this race folded in,
   // since buildCircuitRecords breaks ties in favor of whichever race it
@@ -222,14 +225,14 @@ function ResultCard({
         {laps.map((ms, i) => (
           <p key={i} className="flex justify-between text-xs text-text-faint">
             <span>Lap {i + 1}</span>
-            <span className="text-stat text-text-dim">{ms != null ? formatTime(ms) : "\u2014"}</span>
+            <span className="text-stat text-text-dim">{ms != null && ms !== DNF_LAP_TIME_MS ? formatTime(ms) : "\u2014"}</span>
           </p>
         ))}
       </div>
       {topSpeed != null && (
         <p className="flex justify-between text-xs text-text-faint mt-0.5 pt-0.5 border-t border-border">
           <span>Speed Trap</span>
-          <span className="text-stat text-text-dim">{topSpeed.toFixed(1)}</span>
+          <span className="text-stat text-text-dim">{topSpeed.toFixed(1)} km/h</span>
         </p>
       )}
     </div>

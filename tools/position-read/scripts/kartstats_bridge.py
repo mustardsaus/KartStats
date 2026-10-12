@@ -139,6 +139,23 @@ POST_TIMEOUT_S = 30.0  # one POST per race, from a background thread; generous s
 ERROR_LOG_INTERVAL_S = 10.0
 BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "race_backups")
 
+# Speed unit conversion, confirmed 2026-10-12: PlayerSub10.vehicleSpeed is
+# in game units per frame, MKWii runs at 29.97 fps (NTSC), and 1 game unit
+# == 1 cm. So: units/frame * fps == cm/s, and cm/s * 0.036 == km/h (the
+# standard cm/s -> km/h factor: 3600 s/hr / 100,000 cm/km). Converted once
+# here, the single place raw speed leaves the Dolphin side, so every
+# downstream consumer (DB columns, Circuit Records' speed trap, the live
+# dashboard, Season Rewind's speed graph) already has a real-world unit
+# with no conversion math of its own.
+MKW_FRAMES_PER_SECOND = 29.97
+MKW_UNITS_PER_CM = 1.0
+CM_PER_SEC_TO_KPH = 0.036
+
+
+def _vehicle_speed_to_kph(units_per_frame: float) -> float:
+    cm_per_sec = units_per_frame * MKW_FRAMES_PER_SECOND * MKW_UNITS_PER_CM
+    return cm_per_sec * CM_PER_SEC_TO_KPH
+
 
 class TelemetryBridge:
     """One instance per script run. `slot` is always the 1-indexed
@@ -220,13 +237,15 @@ class TelemetryBridge:
         """Queued into the end-of-race batch like send_item_received --
         nothing in KartStats shows live speed today either. `speed` is
         the raw PlayerSub10.vehicleSpeed reading auto_track_race.py's
-        structural scan finds (see PLAYERSUB10_OFF_VEHICLE_SPEED there) --
-        not km/h or any other real-world unit, since no conversion
-        factor has been confirmed. It's the same raw unit on every race
-        though, so max() within a race (the speed trap) and comparisons
-        across races/circuits are both meaningful on KartStats' side."""
+        structural scan finds (see PLAYERSUB10_OFF_VEHICLE_SPEED there),
+        converted to km/h via _vehicle_speed_to_kph before it's ever
+        queued -- see that function's comment for the confirmed
+        units/frame -> km/h formula. max() within a race (the speed
+        trap) and comparisons across races/circuits are both meaningful
+        on KartStats' side, same as before, just in a real-world unit
+        now."""
         self._queue(
-            {"type": "speed-update", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": ts_ms, "slot": slot, "speed": round(speed, 2)}
+            {"type": "speed-update", "seasonId": self.season_id, "raceNumber": race_number, "tsMs": ts_ms, "slot": slot, "speed": round(_vehicle_speed_to_kph(speed), 2)}
         )
 
     def poll_slot(self, race_number: int, ts_ms: int, slot: int, reading, finishing: bool):

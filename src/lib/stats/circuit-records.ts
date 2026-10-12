@@ -1,4 +1,5 @@
 import type { PlayerId, RawRace } from "@/lib/types";
+import { DNF_LAP_TIME_MS } from "@/lib/telemetry/finalize";
 
 /**
  * Circuit Records: the best-ever single lap and the best-ever full race
@@ -25,8 +26,14 @@ import type { PlayerId, RawRace } from "@/lib/types";
  * holding the speed trap, or vice versa, same independence the lap/race
  * records already have from each other). Built from RawRace's
  * adi/renTopSpeed, which are themselves already a per-race max (see
- * lib/telemetry/finalize.ts) -- raw PlayerSub10.vehicleSpeed units, not
- * km/h or any real-world unit (lib/telemetry/events.ts module doc).
+ * lib/telemetry/finalize.ts) -- km/h, confirmed and converted on the
+ * Python side (lib/telemetry/events.ts module doc).
+ *
+ * A lap that never completed (DNF_LAP_TIME_MS, see
+ * lib/telemetry/finalize.ts) is explicitly excluded below, not just
+ * left to lose the min() comparison -- a circuit with zero real
+ * completed laps across every race must show no Fastest Lap record at
+ * all, never the sentinel itself.
  */
 
 export interface FastestLapRecord {
@@ -111,7 +118,7 @@ export function buildCircuitRecords(races: RawRace[]): Map<string, CircuitRecord
     for (const playerId of PLAYER_IDS) {
       for (const lap of LAPS) {
         const ms = lapTimeMs(race, playerId, lap);
-        if (ms == null) continue;
+        if (ms == null || ms === DNF_LAP_TIME_MS) continue;
         entry.fastestLap = considerLap(entry.fastestLap, {
           playerId,
           lap,
