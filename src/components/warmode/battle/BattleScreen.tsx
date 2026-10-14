@@ -19,6 +19,13 @@ import { LiveLeaderboard } from "@/components/warmode/LiveLeaderboard";
  * `circuit` is the current/just-picked track; while one is still being
  * chosen there's nothing circuit-specific to show yet, so this falls
  * back to the same generic war-mode backdrop photo used elsewhere.
+ *
+ * `maxWidthClassName` defaults to Battle Mode's original max-w-md --
+ * right for a single join/cockpit card, meant to be driven from a phone
+ * held like a second controller. Immersive's dashboard is a desktop-
+ * first results screen (two result cards side by side, graphs, an item
+ * feed) that outgrows that width, so ImmersiveModeClient passes a wider
+ * class instead of this component picking one width for both callers.
  */
 export function BattleScreen({
   circuit,
@@ -26,6 +33,7 @@ export function BattleScreen({
   renPoints,
   guestEnabled = false,
   guestPoints = 0,
+  maxWidthClassName = "max-w-md",
   children,
 }: {
   circuit: Circuit | undefined;
@@ -33,6 +41,7 @@ export function BattleScreen({
   renPoints: number;
   guestEnabled?: boolean;
   guestPoints?: number;
+  maxWidthClassName?: string;
   children: ReactNode;
 }) {
   const isDark = useIsDarkTheme();
@@ -62,7 +71,7 @@ export function BattleScreen({
         <div className="absolute inset-0 bg-gradient-to-t from-void/70 via-transparent to-void/35" />
       </div>
 
-      <div className="relative z-10 mx-auto max-w-md space-y-6">
+      <div className={`relative z-10 mx-auto space-y-6 ${maxWidthClassName}`}>
         <div className="flex justify-center">
           <LiveLeaderboard adiPoints={adiPoints} renPoints={renPoints} guestEnabled={guestEnabled} guestPoints={guestPoints} />
         </div>

@@ -219,7 +219,15 @@ export function ImmersiveModeClient({
   };
 
   return (
-    <BattleScreen circuit={backdropCircuit} adiPoints={adiTotal} renPoints={renTotal}>
+    <BattleScreen
+      circuit={backdropCircuit}
+      adiPoints={adiTotal}
+      renPoints={renTotal}
+      // Wider than BattleScreen's max-w-md default: the result panel's two
+      // side-by-side cards, speed/position graphs and item feed were
+      // cramped into a near-mobile-width column on desktop otherwise.
+      maxWidthClassName="max-w-3xl"
+    >
       <div className="text-center">
         <p className="font-hud text-xs font-bold tracking-[0.25em] text-danger uppercase flex items-center justify-center gap-1.5">
           <Radio className="h-3 w-3 animate-pulse" /> Immersive &mdash; Season {season.seasonNumber}
