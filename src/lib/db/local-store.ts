@@ -505,6 +505,10 @@ export const localStore: DataStore = {
     return state.raceSpeedSamples.filter((s) => s.raceId === raceId);
   },
 
+  async getAllRaceSpeedSamples() {
+    return state.raceSpeedSamples;
+  },
+
   async addRaceItemEvents(raceId, events) {
     state.raceItemEvents.push(...events.map((e) => ({ ...e, raceId })));
   },

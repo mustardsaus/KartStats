@@ -218,6 +218,14 @@ export interface DataStore {
   getRaceSpeedSamples(raceId: string): Promise<RaceSpeedSample[]>;
 
   /**
+   * Every speed sample recorded so far, across every race -- for
+   * Playbook's circuit-profile derivation (lib/stats/circuit-profile.ts),
+   * which needs every race at a given circuit, not one race at a time.
+   * Same bulk-fetch-everything shape as getRacePowerups above.
+   */
+  getAllRaceSpeedSamples(): Promise<RaceSpeedSample[]>;
+
+  /**
    * Writes aggregate item counts straight onto the finalized race — the
    * Immersive equivalent of copyRoundPowerupsToRace above, but built
    * directly from the item-received timeline (there's no BattleRound-

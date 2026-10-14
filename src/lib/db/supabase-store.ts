@@ -935,6 +935,13 @@ export const supabaseStore: DataStore = {
     return (data as RaceSpeedSampleRow[]).map(rowToRaceSpeedSample);
   },
 
+  async getAllRaceSpeedSamples() {
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase.from("race_speed_samples").select("*");
+    if (error) throw error;
+    return (data as RaceSpeedSampleRow[]).map(rowToRaceSpeedSample);
+  },
+
   async addRaceItemEvents(raceId: string, events: RaceItemEvent[]) {
     if (events.length === 0) return;
     const supabase = getSupabaseServerClient();
